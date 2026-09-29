@@ -4,15 +4,11 @@ import re
 from collections import Counter
 from typing import Any
 
-try:
-    import spacy
-except ImportError:
-    spacy = None
-
-try:
-    from sentence_transformers import SentenceTransformer
-except ImportError:
-    SentenceTransformer = None
+# Heavy NLP dependencies are intentionally imported lazily.
+# This prevents spaCy / sentence-transformers / PyTorch from being
+# loaded during FastAPI startup on memory-constrained deployments.
+spacy = None
+SentenceTransformer = None
 
 
 EMOTION_CLASSES = [
@@ -36,12 +32,17 @@ _EMBEDDING_MODEL = None
 
 def _get_spacy_model():
     global _SPACY_MODEL
+    global spacy
 
     if _SPACY_MODEL is not None:
         return _SPACY_MODEL
 
     if spacy is None:
-        return None
+        try:
+            import spacy as _spacy
+            spacy = _spacy
+        except ImportError:
+            return None
 
     for model_name in (
         "en_core_web_sm",
@@ -58,12 +59,19 @@ def _get_spacy_model():
 
 def _get_embedding_model():
     global _EMBEDDING_MODEL
+    global SentenceTransformer
 
     if _EMBEDDING_MODEL is not None:
         return _EMBEDDING_MODEL
 
     if SentenceTransformer is None:
-        return None
+        try:
+            from sentence_transformers import (
+                SentenceTransformer as _SentenceTransformer,
+            )
+            SentenceTransformer = _SentenceTransformer
+        except ImportError:
+            return None
 
     try:
         _EMBEDDING_MODEL = SentenceTransformer(
