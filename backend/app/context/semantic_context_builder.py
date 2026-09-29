@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import gc
+import os
 import re
+import sys
 from collections import Counter
 from typing import Any
 
@@ -28,6 +31,25 @@ EMOTION_CLASSES = [
 
 _SPACY_MODEL = None
 _EMBEDDING_MODEL = None
+
+
+def _semantic_embeddings_enabled() -> bool:
+    """
+    SentenceTransformer is opt-in so the conversation worker can run
+    safely on memory-constrained deployments.
+
+    Set MINDO_ENABLE_SEMANTIC_EMBEDDINGS=true on a deployment with
+    enough memory to enable the embedding-based enrichment.
+    """
+    return os.getenv(
+        "MINDO_ENABLE_SEMANTIC_EMBEDDINGS",
+        "false",
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _get_spacy_model():
@@ -61,6 +83,9 @@ def _get_embedding_model():
     global _EMBEDDING_MODEL
     global SentenceTransformer
 
+    if not _semantic_embeddings_enabled():
+        return None
+
     if _EMBEDDING_MODEL is not None:
         return _EMBEDDING_MODEL
 
@@ -80,6 +105,35 @@ def _get_embedding_model():
         return _EMBEDDING_MODEL
     except Exception:
         return None
+
+
+def _release_nlp_models() -> None:
+    """
+    Release cached NLP models after a semantic build so a long-lived
+    worker does not retain peak memory between sessions.
+    """
+    global _SPACY_MODEL
+    global _EMBEDDING_MODEL
+    global spacy
+    global SentenceTransformer
+
+    _SPACY_MODEL = None
+    _EMBEDDING_MODEL = None
+    spacy = None
+    SentenceTransformer = None
+
+    gc.collect()
+
+    # Never import torch just for cleanup. If it was already imported by
+    # SentenceTransformer, ask the existing module to release cached CUDA
+    # allocations; otherwise leave it completely unloaded.
+    torch_module = sys.modules.get("torch")
+    if torch_module is not None:
+        try:
+            if torch_module.cuda.is_available():
+                torch_module.cuda.empty_cache()
+        except Exception:
+            pass
 
 
 # =========================================================
@@ -1371,12 +1425,12 @@ def _semantic_similarity_groups(
     ):
         return []
 
+    # These statements have already passed `_build_user_statements`.
+    # Re-running the spaCy filter here only increases temporary memory.
     valid_statements = [
         statement
         for statement in statements
-        if _has_semantic_information(
-            statement.get("text", "")
-        )
+        if _clean_text(statement.get("text", ""))
     ]
 
     if len(valid_statements) < 2:
@@ -2709,12 +2763,10 @@ def _build_diagnostics(
     check without re-deriving it from source.
     """
 
-    spacy_model = _get_spacy_model()
-    embedding_model = _get_embedding_model()
-
+    # Diagnostics must never load heavyweight models.
     return {
-        "spacy_model_loaded": spacy_model is not None,
-        "embedding_model_loaded": embedding_model is not None,
+        "spacy_model_loaded": _SPACY_MODEL is not None,
+        "embedding_model_loaded": _EMBEDDING_MODEL is not None,
         "total_turns": total_turns,
         "user_statements_extracted": len(
             user_statements
@@ -2937,89 +2989,94 @@ def build_semantic_context(
         )
     ]
 
-    # -----------------------------------------------------
-    # Conversation turns
-    # -----------------------------------------------------
+    try:
+        # -----------------------------------------------------
+        # Conversation turns
+        # -----------------------------------------------------
 
-    semantic_turns = [
-        _build_conversation_turn(
-            turn
-        )
-        for turn in valid_turns
-    ]
+        semantic_turns = [
+            _build_conversation_turn(
+                turn
+            )
+            for turn in valid_turns
+        ]
 
-    # -----------------------------------------------------
-    # Semantic extraction
-    # -----------------------------------------------------
+        # -----------------------------------------------------
+        # Semantic extraction
+        # -----------------------------------------------------
 
-    user_statements = _build_user_statements(
-        valid_turns
-    )
-
-    stated_concerns = (
-        _build_stated_concerns(
-            user_statements
-        )
-    )
-
-    situational_factors = (
-        _build_situational_factors(
-            user_statements
-        )
-    )
-
-    dynamic_analysis = (
-        _build_dynamic_analysis(
+        user_statements = _build_user_statements(
             valid_turns
         )
-    )
 
-    # -----------------------------------------------------
-    # Final schema
-    # -----------------------------------------------------
+        stated_concerns = (
+            _build_stated_concerns(
+                user_statements
+            )
+        )
 
-    return {
-        "schema_version": "2.0",
+        situational_factors = (
+            _build_situational_factors(
+                user_statements
+            )
+        )
 
-        "session": {
-            "session_id": session.get(
-                "session_id"
-            ),
-            "start_time": session.get(
-                "start_time"
-            ),
-            "end_time": session.get(
-                "end_time"
-            ),
-            "duration_seconds": session.get(
-                "duration_seconds"
-            ),
-            "total_turns": len(
-                semantic_turns
-            ),
-        },
+        dynamic_analysis = (
+            _build_dynamic_analysis(
+                valid_turns
+            )
+        )
 
-        "conversation": {
-            "turns": semantic_turns,
-        },
+        # -----------------------------------------------------
+        # Final schema
+        # -----------------------------------------------------
+
+        return {
+            "schema_version": "2.0",
+
+            "session": {
+                "session_id": session.get(
+                    "session_id"
+                ),
+                "start_time": session.get(
+                    "start_time"
+                ),
+                "end_time": session.get(
+                    "end_time"
+                ),
+                "duration_seconds": session.get(
+                    "duration_seconds"
+                ),
+                "total_turns": len(
+                    semantic_turns
+                ),
+            },
+
+            "conversation": {
+                "turns": semantic_turns,
+            },
 
 
-        "context": {
-            "stated_concerns": (
-                stated_concerns
-            ),
+            "context": {
+                "stated_concerns": (
+                    stated_concerns
+                ),
 
-            "situational_factors": (
-                situational_factors
-            ),
+                "situational_factors": (
+                    situational_factors
+                ),
 
-            "dynamic_analysis": (
-                dynamic_analysis
-            ),
+                "dynamic_analysis": (
+                    dynamic_analysis
+                ),
 
-        },
+            },
 
-        "safety": {
-            "assessment_status": "not_assessed",
-        },
-    }
+            "safety": {
+                "assessment_status": "not_assessed",
+            },
+        }
+
+    finally:
+        # Release both heavy NLP stacks after every build, including failures.
+        _release_nlp_models()
