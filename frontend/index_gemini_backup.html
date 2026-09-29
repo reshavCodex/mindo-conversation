@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>MINDO AI</title>
+
+    <style>
+
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        #status {
+            text-align: center;
+            margin: 20px;
+            font-weight: bold;
+        }
+
+        .buttons {
+            text-align: center;
+        }
+
+        button {
+            padding: 12px 25px;
+            margin: 5px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        #conversation {
+            margin-top: 30px;
+            padding: 20px;
+            background: white;
+            min-height: 200px;
+            border-radius: 10px;
+        }
+
+        .message {
+            margin: 10px 0;
+        }
+
+        #debug {
+            margin-top: 20px;
+            padding: 15px;
+            background: #111;
+            color: #00ff88;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 13px;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+
+    </style>
+
+</head>
+
+
+<body>
+
+    <h1>🧠 MINDO AI</h1>
+
+
+    <div id="status">
+        Disconnected
+    </div>
+
+
+    <div class="buttons">
+
+        <button id="startButton">
+            🎤 Start Conversation
+        </button>
+
+        <button
+            id="stopButton"
+            disabled
+        >
+            ⛔ Stop
+        </button>
+
+    </div>
+
+
+    <div id="conversation"></div>
+
+
+    <div id="debug"></div>
+
+
+<script>
+
+
+// ============================================================
+// GLOBAL VARIABLES
+// ============================================================
+
+let socket = null;
+
+let audioContext = null;
+
+let playbackContext = null;
+
+let mediaStream = null;
+
+let microphoneSource = null;
+
+let processor = null;
+
+let audioFramesSent = 0;
+
+let audioChunksReceived = 0;
+
+let nextPlaybackTime = 0;
+
+
+// ============================================================
+// ELEMENTS
+// ============================================================
+
+const startButton =
+    document.getElementById(
+        "startButton"
+    );
+
+
+const stopButton =
+    document.getElementById(
+        "stopButton"
+    );
+
+
+const status =
+    document.getElementById(
+        "status"
+    );
+
+
+const conversation =
+    document.getElementById(
+        "conversation"
+    );
+
+
+const debug =
+    document.getElementById(
+        "debug"
+    );
+
+
+// ============================================================
+// DEBUG LOGGER
+// ============================================================
+
+function log(message) {
+
+    console.log(message);
+
+    const line =
+        document.createElement(
+            "div"
+        );
+
+    line.textContent =
+        new Date().toLocaleTimeString()
+        + " - "
+        + message;
+
+    debug.appendChild(line);
+
+    debug.scrollTop =
+        debug.scrollHeight;
+}
+
+
+// ============================================================
+// START BUTTON
+// ============================================================
+
+startButton.addEventListener(
+    "click",
+    startConversation
+);
+
+
+// ============================================================
+// START CONVERSATION
+// ============================================================
+
+async function startConversation() {
+
+    try {
+
+        log(
+            "Starting conversation..."
+        );
+
+
+        status.textContent =
+            "Connecting to MINDO...";
+
+
+        // ====================================================
+        // CREATE PLAYBACK AUDIO CONTEXT
+        // ====================================================
+
+        playbackContext =
+            new AudioContext({
+                sampleRate: 24000
+            });
+
+
+        await playbackContext.resume();
+
+
+        nextPlaybackTime =
+            playbackContext.currentTime;
+
+
+        log(
+            "Playback audio context ready"
+        );
+
+
+        // ====================================================
+        // CREATE WEBSOCKET
+        // ====================================================
+
+        socket =
+            new WebSocket(
+                "ws://127.0.0.1:8000/ws/realtime"
+            );
+
+
+        socket.binaryType =
+            "arraybuffer";
+
+
+        // ====================================================
+        // WEBSOCKET OPEN
+        // ====================================================
+
+        socket.onopen =
+            async function () {
+
+                log(
+                    "WebSocket connected"
+                );
+
+
+                status.textContent =
+                    "Connected 🎤";
+
+
+                startButton.disabled =
+                    true;
+
+
+                stopButton.disabled =
+                    false;
+
+
+                await startMicrophone();
+
+            };
+
+
+        // ====================================================
+        // RECEIVE FROM BACKEND
+        // ====================================================
+
+        socket.onmessage =
+            async function (event) {
+
+                // --------------------------------------------
+                // GEMINI AUDIO
+                // --------------------------------------------
+
+                if (
+                    event.data instanceof ArrayBuffer
+                ) {
+
+                    audioChunksReceived++;
+
+
+                    log(
+                        "Gemini audio received: "
+                        +
+                        event.data.byteLength
+                        +
+                        " bytes"
+                    );
+
+
+                    playGeminiAudio(
+                        event.data
+                    );
+
+
+                    return;
+                }
+
+
+                // --------------------------------------------
+                // GEMINI AUDIO AS BLOB
+                // --------------------------------------------
+
+                if (
+                    event.data instanceof Blob
+                ) {
+
+                    const audioData =
+                        await event.data.arrayBuffer();
+
+
+                    audioChunksReceived++;
+
+
+                    log(
+                        "Gemini audio Blob received: "
+                        +
+                        audioData.byteLength
+                        +
+                        " bytes"
+                    );
+
+
+                    playGeminiAudio(
+                        audioData
+                    );
+
+
+                    return;
+                }
+
+
+                // --------------------------------------------
+                // TEXT / JSON
+                // --------------------------------------------
+
+                if (
+                    typeof event.data === "string"
+                ) {
+
+                    log(
+                        "Server message: "
+                        +
+                        event.data
+                    );
+
+
+                    try {
+
+                        const data =
+                            JSON.parse(
+                                event.data
+                            );
+
+
+                        if (
+                            data.type === "text"
+                        ) {
+
+                            addMessage(
+                                "AI",
+                                data.text
+                            );
+
+                        }
+
+
+                        if (
+                            data.type === "error"
+                        ) {
+
+                            status.textContent =
+                                "Error";
+
+
+                            log(
+                                "SERVER ERROR: "
+                                +
+                                data.message
+                            );
+
+                        }
+
+                    }
+                    catch (error) {
+
+                        console.error(
+                            error
+                        );
+
+                    }
+
+                }
+
+            };
+
+
+        // ====================================================
+        // WEBSOCKET ERROR
+        // ====================================================
+
+        socket.onerror =
+            function (error) {
+
+                console.error(
+                    "WebSocket error:",
+                    error
+                );
+
+
+                log(
+                    "WebSocket ERROR"
+                );
+
+
+                status.textContent =
+                    "WebSocket error";
+
+            };
+
+
+        // ====================================================
+        // WEBSOCKET CLOSE
+        // ====================================================
+
+        socket.onclose =
+            function (event) {
+
+                log(
+                    "WebSocket closed. Code: "
+                    +
+                    event.code
+                );
+
+
+                status.textContent =
+                    "Disconnected";
+
+
+                stopMicrophone();
+
+
+                startButton.disabled =
+                    false;
+
+
+                stopButton.disabled =
+                    true;
+
+            };
+
+    }
+    catch (error) {
+
+        console.error(
+            error
+        );
+
+
+        log(
+            "START ERROR: "
+            +
+            error.message
+        );
+
+
+        status.textContent =
+            error.message;
+
+    }
+
+}
+
+
+// ============================================================
+// MICROPHONE
+// ============================================================
+
+async function startMicrophone() {
+
+    log(
+        "Requesting microphone..."
+    );
+
+
+    mediaStream =
+        await navigator.mediaDevices
+            .getUserMedia({
+
+                audio: {
+
+                    channelCount: 1,
+
+                    echoCancellation: true,
+
+                    noiseSuppression: true,
+
+                    autoGainControl: true
+
+                }
+
+            });
+
+
+    log(
+        "Microphone permission granted"
+    );
+
+
+    // ========================================================
+    // CREATE AUDIO CONTEXT
+    // ========================================================
+
+    audioContext =
+        new AudioContext({
+            sampleRate: 16000
+        });
+
+
+    await audioContext.resume();
+
+
+    log(
+        "Microphone sample rate: "
+        +
+        audioContext.sampleRate
+    );
+
+
+    // ========================================================
+    // MICROPHONE SOURCE
+    // ========================================================
+
+    microphoneSource =
+        audioContext
+            .createMediaStreamSource(
+                mediaStream
+            );
+
+
+    // ========================================================
+    // PROCESSOR
+    // ========================================================
+
+    processor =
+        audioContext.createScriptProcessor(
+            4096,
+            1,
+            1
+        );
+
+
+    processor.onaudioprocess =
+        function (event) {
+
+            if (!socket) {
+
+                return;
+
+            }
+
+
+            if (
+                socket.readyState !==
+                WebSocket.OPEN
+            ) {
+
+                return;
+
+            }
+
+
+            const input =
+                event.inputBuffer
+                    .getChannelData(0);
+
+
+            const pcm16 =
+                convertFloat32ToPCM16(
+                    input
+                );
+
+
+            socket.send(
+                pcm16
+            );
+
+
+            audioFramesSent++;
+
+
+            // Log only every 50 frames
+            // to avoid flooding the screen.
+
+            if (
+                audioFramesSent % 50 === 0
+            ) {
+
+                log(
+                    "Audio frames sent: "
+                    +
+                    audioFramesSent
+                );
+
+            }
+
+        };
+
+
+    microphoneSource.connect(
+        processor
+    );
+
+
+    processor.connect(
+        audioContext.destination
+    );
+
+
+    log(
+        "Microphone streaming started"
+    );
+
+}
+
+
+// ============================================================
+// FLOAT32 → PCM16
+// ============================================================
+
+function convertFloat32ToPCM16(
+    float32Array
+) {
+
+    const buffer =
+        new ArrayBuffer(
+            float32Array.length * 2
+        );
+
+
+    const view =
+        new DataView(
+            buffer
+        );
+
+
+    for (
+        let i = 0;
+        i < float32Array.length;
+        i++
+    ) {
+
+        let sample =
+            Math.max(
+                -1,
+                Math.min(
+                    1,
+                    float32Array[i]
+                )
+            );
+
+
+        sample =
+            sample < 0
+                ? sample * 0x8000
+                : sample * 0x7FFF;
+
+
+        view.setInt16(
+            i * 2,
+            sample,
+            true
+        );
+
+    }
+
+
+    return buffer;
+
+}
+
+
+// ============================================================
+// PLAY GEMINI AUDIO
+// ============================================================
+
+function playGeminiAudio(
+    arrayBuffer
+) {
+
+    try {
+
+        if (!playbackContext) {
+
+            return;
+
+        }
+
+
+        const int16 =
+            new Int16Array(
+                arrayBuffer
+            );
+
+
+        const audioBuffer =
+            playbackContext.createBuffer(
+                1,
+                int16.length,
+                24000
+            );
+
+
+        const channel =
+            audioBuffer.getChannelData(
+                0
+            );
+
+
+        for (
+            let i = 0;
+            i < int16.length;
+            i++
+        ) {
+
+            channel[i] =
+                int16[i] / 32768;
+
+        }
+
+
+        const source =
+            playbackContext
+                .createBufferSource();
+
+
+        source.buffer =
+            audioBuffer;
+
+
+        source.connect(
+            playbackContext.destination
+        );
+
+
+        const startTime =
+            Math.max(
+                playbackContext.currentTime,
+                nextPlaybackTime
+            );
+
+
+        source.start(
+            startTime
+        );
+
+
+        nextPlaybackTime =
+            startTime
+            +
+            audioBuffer.duration;
+
+
+    }
+    catch (error) {
+
+        console.error(
+            "Audio playback error:",
+            error
+        );
+
+
+        log(
+            "Audio playback error: "
+            +
+            error.message
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// STOP MICROPHONE
+// ============================================================
+
+function stopMicrophone() {
+
+    if (processor) {
+
+        processor.disconnect();
+
+        processor = null;
+
+    }
+
+
+    if (microphoneSource) {
+
+        microphoneSource.disconnect();
+
+        microphoneSource = null;
+
+    }
+
+
+    if (mediaStream) {
+
+        mediaStream
+            .getTracks()
+            .forEach(
+                track => track.stop()
+            );
+
+        mediaStream = null;
+
+    }
+
+
+    if (audioContext) {
+
+        audioContext.close();
+
+        audioContext = null;
+
+    }
+
+}
+
+
+// ============================================================
+// STOP CONVERSATION
+// ============================================================
+
+stopButton.addEventListener(
+    "click",
+    stopConversation
+);
+
+
+function stopConversation() {
+
+    log(
+        "Stopping conversation..."
+    );
+
+
+    stopMicrophone();
+
+
+    if (socket) {
+
+        socket.close();
+
+        socket = null;
+
+    }
+
+
+    if (playbackContext) {
+
+        playbackContext.close();
+
+        playbackContext = null;
+
+    }
+
+
+    status.textContent =
+        "Stopped";
+
+
+    startButton.disabled =
+        false;
+
+
+    stopButton.disabled =
+        true;
+
+}
+
+
+// ============================================================
+// DISPLAY MESSAGE
+// ============================================================
+
+function addMessage(
+    sender,
+    text
+) {
+
+    const div =
+        document.createElement(
+            "div"
+        );
+
+
+    div.className =
+        "message";
+
+
+    div.innerHTML =
+        `<strong>${sender}:</strong> ${text}`;
+
+
+    conversation.appendChild(
+        div
+    );
+
+}
+
+</script>
+
+</body>
+
+</html>

@@ -1,0 +1,1581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>FER Browser Test</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+            background: #111;
+            color: white;
+            padding: 30px;
+        }
+
+        .container {
+            width: min(1000px, 100%);
+            margin: auto;
+        }
+
+        h1 {
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: #aaa;
+            margin-bottom: 25px;
+        }
+
+        .camera-container {
+            position: relative;
+            width: 100%;
+            max-width: 900px;
+            aspect-ratio: 16 / 9;
+            margin: auto;
+            background: #000;
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        video,
+        canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        video {
+            transform: scaleX(-1);
+        }
+
+        canvas {
+            pointer-events: none;
+            transform: scaleX(-1);
+        }
+
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        button {
+            border: none;
+            padding: 12px 20px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+        }
+
+        #startButton {
+            background: #4caf50;
+            color: white;
+        }
+
+        #stopButton {
+            background: #d9534f;
+            color: white;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .panel {
+            margin-top: 20px;
+            padding: 18px;
+            border-radius: 12px;
+            background: #1c1c1c;
+        }
+
+        .panel h2 {
+            margin-top: 0;
+        }
+
+        #status {
+            color: #ccc;
+        }
+
+        #emotion {
+            font-size: 30px;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+
+        #probabilities {
+            font-family: monospace;
+            white-space: pre-line;
+            line-height: 1.7;
+            color: #bbb;
+        }
+
+        #debug {
+            font-family: monospace;
+            font-size: 13px;
+            color: #888;
+            white-space: pre-wrap;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>Facial Emotion Recognition Test</h1>
+
+    <div class="subtitle">
+        Browser camera + MediaPipe + ONNX Runtime Web
+    </div>
+
+
+    <!-- =========================================================
+         CAMERA
+         ========================================================= -->
+
+    <div class="camera-container">
+
+        <video
+            id="video"
+            autoplay
+            playsinline
+            muted>
+        </video>
+
+        <canvas id="canvas"></canvas>
+
+    </div>
+
+
+    <!-- =========================================================
+         CONTROLS
+         ========================================================= -->
+
+    <div class="controls">
+
+        <button id="startButton">
+            Start Camera
+        </button>
+
+        <button
+            id="stopButton"
+            disabled>
+            Stop Camera
+        </button>
+
+    </div>
+
+
+    <!-- =========================================================
+         STATUS
+         ========================================================= -->
+
+    <div class="panel">
+
+        <h2>Status</h2>
+
+        <div id="status">
+            Waiting...
+        </div>
+
+    </div>
+
+
+    <!-- =========================================================
+         EMOTION RESULT
+         ========================================================= -->
+
+    <div class="panel">
+
+        <h2>Emotion</h2>
+
+        <div id="emotion">
+            Waiting for face...
+        </div>
+
+        <div id="probabilities">
+            ONNX model has not run yet.
+        </div>
+
+    </div>
+
+
+    <!-- =========================================================
+         DEBUG
+         ========================================================= -->
+
+    <div class="panel">
+
+        <h2>Debug</h2>
+
+        <div id="debug">
+            Initializing...
+        </div>
+
+    </div>
+
+</div>
+
+
+<!-- =============================================================
+     ONNX RUNTIME WEB
+     ============================================================= -->
+
+<script
+    src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/ort.min.js">
+</script>
+
+
+<!-- =============================================================
+     APPLICATION
+     ============================================================= -->
+
+<script type="module">
+
+    // ============================================================
+    // MEDIAPIPE
+    // ============================================================
+
+    import {
+        FaceDetector,
+        FilesetResolver
+    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs";
+
+
+    // ============================================================
+    // DOM
+    // ============================================================
+
+    const video =
+        document.getElementById("video");
+
+    const canvas =
+        document.getElementById("canvas");
+
+    const ctx =
+        canvas.getContext("2d");
+
+    const startButton =
+        document.getElementById("startButton");
+
+    const stopButton =
+        document.getElementById("stopButton");
+
+    const statusElement =
+        document.getElementById("status");
+
+    const emotionElement =
+        document.getElementById("emotion");
+
+    const probabilitiesElement =
+        document.getElementById("probabilities");
+
+    const debugElement =
+        document.getElementById("debug");
+
+
+    // ============================================================
+    // OFFSCREEN CANVAS
+    //
+    // Used to crop the face and resize it to 224x224.
+    // ============================================================
+
+    const faceCanvas =
+        document.createElement("canvas");
+
+    faceCanvas.width = 224;
+    faceCanvas.height = 224;
+
+    const faceCtx =
+        faceCanvas.getContext("2d", {
+            willReadFrequently: true
+        });
+
+
+    // ============================================================
+    // STATE
+    // ============================================================
+
+    let stream = null;
+
+    let faceDetector = null;
+
+    let ortSession = null;
+
+    let animationFrameId = null;
+
+    let lastVideoTime = -1;
+
+    let inferenceRunning = false;
+
+    let lastInferenceTime = 0;
+
+
+    // ============================================================
+    // TEMPORAL SMOOTHING
+    // ============================================================
+
+    // Same smoothing window used by the original FER project.
+    const SMOOTHING_WINDOW = 8;
+
+    // Stores the most recent probability vectors.
+    let probabilityHistory = [];
+
+
+    // Run FER approximately 5 times per second.
+    //
+    // This is intentional.
+    // We do NOT want to run EfficientNet on every camera frame.
+    //
+    const INFERENCE_INTERVAL_MS = 200;
+
+
+    // ============================================================
+    // MODEL CONFIGURATION
+    // ============================================================
+
+    const MODEL_URL =
+        "./models/emotion_model_best.onnx";
+
+
+    const EMOTION_CLASSES = [
+        "angry",
+        "disgust",
+        "fear",
+        "happy",
+        "neutral",
+        "sad",
+        "surprise"
+    ];
+
+
+    // ============================================================
+    // IMAGE NORMALIZATION
+    //
+    // Exactly matches the PyTorch ImageNet normalization:
+    //
+    // mean = [0.485, 0.456, 0.406]
+    // std  = [0.229, 0.224, 0.225]
+    // ============================================================
+
+    const MEAN = [
+        0.485,
+        0.456,
+        0.406
+    ];
+
+    const STD = [
+        0.229,
+        0.224,
+        0.225
+    ];
+
+
+    // ============================================================
+    // STATUS HELPERS
+    // ============================================================
+
+    function setStatus(message) {
+
+        statusElement.textContent =
+            message;
+
+        console.log(message);
+    }
+
+
+    function setDebug(message) {
+
+        debugElement.textContent =
+            message;
+
+        console.log(message);
+    }
+
+
+    // ============================================================
+    // INITIALIZE ONNX RUNTIME
+    // ============================================================
+
+    async function initializeONNX() {
+
+        try {
+
+            setStatus(
+                "Loading ONNX Runtime..."
+            );
+
+
+            if (
+                typeof ort === "undefined"
+            ) {
+
+                throw new Error(
+                    "ONNX Runtime Web failed to load."
+                );
+            }
+
+
+            setDebug(
+                "ONNX Runtime Web loaded.\n\n" +
+                "Configuring WASM CPU backend..."
+            );
+
+
+            /*
+             * Explicitly use the WASM/CPU backend.
+             *
+             * This keeps the FER system hardware-independent.
+             */
+
+            ort.env.wasm.wasmPaths =
+                "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/";
+
+
+            setDebug(
+                "ONNX Runtime Web loaded.\n\n" +
+                "Creating inference session..."
+            );
+
+
+            ortSession =
+                await ort.InferenceSession.create(
+                    MODEL_URL,
+                    {
+                        executionProviders: [
+                            "wasm"
+                        ],
+
+                        graphOptimizationLevel:
+                            "all"
+                    }
+                );
+
+
+            console.log(
+                "ONNX input names:",
+                ortSession.inputNames
+            );
+
+            console.log(
+                "ONNX output names:",
+                ortSession.outputNames
+            );
+
+
+            setStatus(
+                "ONNX model loaded."
+            );
+
+
+            setDebug(
+                "ONNX model loaded successfully.\n\n" +
+
+                "Model: emotion_model_best.onnx\n" +
+
+                "Input:\n" +
+                ortSession.inputNames.join(", ") +
+
+                "\n\nOutput:\n" +
+                ortSession.outputNames.join(", ") +
+
+                "\n\nExecution provider: WASM CPU"
+            );
+
+
+            return true;
+
+        } catch (error) {
+
+            console.error(
+                "ONNX initialization error:",
+                error
+            );
+
+
+            setStatus(
+                "ONNX initialization failed."
+            );
+
+
+            setDebug(
+                "ONNX initialization failed.\n\n" +
+                (
+                    error?.stack ||
+                    error?.message ||
+                    String(error)
+                )
+            );
+
+
+            return false;
+        }
+    }
+
+
+    // ============================================================
+    // INITIALIZE MEDIAPIPE
+    // ============================================================
+
+    async function initializeFaceDetector() {
+
+        try {
+
+            setStatus(
+                "Loading MediaPipe..."
+            );
+
+
+            const vision =
+                await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm"
+                );
+
+
+            faceDetector =
+                await FaceDetector.createFromOptions(
+                    vision,
+                    {
+                        baseOptions: {
+                            modelAssetPath:
+                                "https://storage.googleapis.com/" +
+                                "mediapipe-models/" +
+                                "face_detector/" +
+                                "blaze_face_short_range/" +
+                                "float16/1/" +
+                                "blaze_face_short_range.tflite"
+                        },
+
+                        runningMode: "VIDEO",
+
+                        minDetectionConfidence: 0.6
+                    }
+                );
+
+
+            setStatus(
+                "MediaPipe ready."
+            );
+
+
+            return true;
+
+        } catch (error) {
+
+            console.error(
+                "MediaPipe initialization error:",
+                error
+            );
+
+
+            setStatus(
+                "MediaPipe initialization failed."
+            );
+
+
+            setDebug(
+                "MediaPipe initialization failed.\n\n" +
+                (
+                    error?.stack ||
+                    error?.message ||
+                    String(error)
+                )
+            );
+
+
+            return false;
+        }
+    }
+
+
+    // ============================================================
+    // SOFTMAX
+    // ============================================================
+
+    function softmax(logits) {
+
+        const maxLogit =
+            Math.max(...logits);
+
+
+        const exponentials =
+            logits.map(
+                value =>
+                    Math.exp(
+                        value - maxLogit
+                    )
+            );
+
+
+        const sum =
+            exponentials.reduce(
+                (a, b) => a + b,
+                0
+            );
+
+
+        return exponentials.map(
+            value => value / sum
+        );
+    }
+
+    // ============================================================
+    // TEMPORAL SMOOTHING
+    // ============================================================
+
+    function smoothProbabilities(probabilities) {
+
+        // Add the newest probability vector.
+        probabilityHistory.push(probabilities);
+
+
+        // Keep only the latest 8 predictions.
+        if (
+            probabilityHistory.length >
+            SMOOTHING_WINDOW
+        ) {
+            probabilityHistory.shift();
+        }
+
+
+        // Create an array for the averaged probabilities.
+        const smoothed =
+            new Array(
+                EMOTION_CLASSES.length
+            ).fill(0);
+
+
+        // Add every probability vector.
+        for (
+            const historyItem
+            of probabilityHistory
+        ) {
+
+            for (
+                let i = 0;
+                i < EMOTION_CLASSES.length;
+                i++
+            ) {
+
+                smoothed[i] +=
+                    historyItem[i];
+            }
+        }
+
+
+        // Divide by the number of available frames.
+        for (
+            let i = 0;
+            i < smoothed.length;
+            i++
+        ) {
+
+            smoothed[i] /=
+                probabilityHistory.length;
+        }
+
+
+        return smoothed;
+    }
+
+
+    // ============================================================
+    // FACE CROP → ONNX TENSOR
+    //
+    // Input expected by EfficientNet:
+    //
+    // [1, 3, 224, 224]
+    //
+    // RGB
+    // 0-1 scaling
+    // ImageNet normalization
+    // ============================================================
+
+    function createInputTensor(
+        detection
+    ) {
+
+        const box =
+            detection.boundingBox;
+
+
+        if (!box) {
+            return null;
+        }
+
+
+        let x =
+            Math.floor(box.originX);
+
+        let y =
+            Math.floor(box.originY);
+
+        let width =
+            Math.floor(box.width);
+
+        let height =
+            Math.floor(box.height);
+
+
+        // Clamp coordinates to video bounds.
+
+        x =
+            Math.max(
+                0,
+                Math.min(
+                    x,
+                    video.videoWidth - 1
+                )
+            );
+
+        y =
+            Math.max(
+                0,
+                Math.min(
+                    y,
+                    video.videoHeight - 1
+                )
+            );
+
+
+        width =
+            Math.min(
+                width,
+                video.videoWidth - x
+            );
+
+        height =
+            Math.min(
+                height,
+                video.videoHeight - y
+            );
+
+
+        if (
+            width <= 0 ||
+            height <= 0
+        ) {
+
+            return null;
+        }
+
+
+        /*
+         * Draw the face crop directly into a
+         * 224x224 canvas.
+         *
+         * This performs the resize required
+         * before EfficientNet inference.
+         */
+
+        faceCtx.drawImage(
+            video,
+
+            x,
+            y,
+            width,
+            height,
+
+            0,
+            0,
+            224,
+            224
+        );
+
+
+        const imageData =
+            faceCtx.getImageData(
+                0,
+                0,
+                224,
+                224
+            );
+
+
+        const pixels =
+            imageData.data;
+
+
+        /*
+         * NCHW tensor:
+         *
+         * channel 0 = Red
+         * channel 1 = Green
+         * channel 2 = Blue
+         */
+
+        const input =
+            new Float32Array(
+                1 * 3 * 224 * 224
+            );
+
+
+        const channelSize =
+            224 * 224;
+
+
+        for (
+            let i = 0;
+            i < 224 * 224;
+            i++
+        ) {
+
+            const pixelIndex =
+                i * 4;
+
+
+            const r =
+                pixels[pixelIndex] / 255.0;
+
+            const g =
+                pixels[pixelIndex + 1] / 255.0;
+
+            const b =
+                pixels[pixelIndex + 2] / 255.0;
+
+
+            input[i] =
+                (r - MEAN[0]) / STD[0];
+
+            input[channelSize + i] =
+                (g - MEAN[1]) / STD[1];
+
+            input[
+                (2 * channelSize) + i
+            ] =
+                (b - MEAN[2]) / STD[2];
+        }
+
+
+        /*
+         * The exported PyTorch model's input
+         * name is obtained dynamically below.
+         */
+
+        return new ort.Tensor(
+            "float32",
+            input,
+            [
+                1,
+                3,
+                224,
+                224
+            ]
+        );
+    }
+
+
+    // ============================================================
+    // RUN EMOTION INFERENCE
+    // ============================================================
+
+    async function runEmotionInference(
+        detection
+    ) {
+
+        if (
+            !ortSession ||
+            inferenceRunning
+        ) {
+
+            return;
+        }
+
+
+        const now =
+            performance.now();
+
+
+        if (
+            now - lastInferenceTime <
+            INFERENCE_INTERVAL_MS
+        ) {
+
+            return;
+        }
+
+
+        lastInferenceTime =
+            now;
+
+
+        inferenceRunning = true;
+
+
+        try {
+
+            const inputTensor =
+                createInputTensor(
+                    detection
+                );
+
+
+            if (!inputTensor) {
+                return;
+            }
+
+
+            const inputName =
+                ortSession.inputNames[0];
+
+
+            const outputName =
+                ortSession.outputNames[0];
+
+
+            const feeds = {};
+
+            feeds[inputName] =
+                inputTensor;
+
+
+            const results =
+                await ortSession.run(
+                    feeds
+                );
+
+
+            const output =
+                results[outputName];
+
+
+            if (!output) {
+
+                throw new Error(
+                    "ONNX output tensor was not found."
+                );
+            }
+
+
+            const logits =
+                Array.from(
+                    output.data
+                );
+
+
+            // Convert logits to probabilities.
+            const probabilities =
+                softmax(logits);
+
+
+            // ============================================================
+            // TEMPORAL SMOOTHING
+            // ============================================================
+
+            const smoothedProbabilities =
+                smoothProbabilities(
+                    probabilities
+                );
+
+
+            // ============================================================
+            // FIND SMOOTHED PREDICTION
+            // ============================================================
+
+            let maxIndex = 0;
+
+
+            for (
+                let i = 1;
+                i < smoothedProbabilities.length;
+                i++
+            ) {
+
+                if (
+                    smoothedProbabilities[i] >
+                    smoothedProbabilities[maxIndex]
+                ) {
+
+                    maxIndex = i;
+                }
+            }
+
+
+            const predictedEmotion =
+                EMOTION_CLASSES[maxIndex];
+
+
+            // Display the SMOOTHED result.
+            displayEmotion(
+                predictedEmotion,
+                smoothedProbabilities
+            );
+
+
+        } catch (error) {
+
+            console.error(
+                "ONNX inference error:",
+                error
+            );
+
+
+            setDebug(
+                "ONNX inference error:\n\n" +
+                (
+                    error?.stack ||
+                    error?.message ||
+                    String(error)
+                )
+            );
+
+        } finally {
+
+            inferenceRunning = false;
+        }
+    }
+
+
+    // ============================================================
+    // DISPLAY EMOTION
+    // ============================================================
+
+    function displayEmotion(
+        emotion,
+        probabilities
+    ) {
+
+        emotionElement.textContent =
+            emotion.toUpperCase();
+
+
+        const lines = [];
+
+
+        for (
+            let i = 0;
+            i < EMOTION_CLASSES.length;
+            i++
+        ) {
+
+            const label =
+                EMOTION_CLASSES[i];
+
+            const probability =
+                probabilities[i];
+
+
+            lines.push(
+                `${label.padEnd(10, " ")} ` +
+                `${(probability * 100).toFixed(2)}%`
+            );
+        }
+
+
+        lines.push(
+            "",
+            `Smoothing: ${probabilityHistory.length}/${SMOOTHING_WINDOW} frames`
+        );
+
+
+        probabilitiesElement.textContent =
+            lines.join("\n");
+    }
+
+    // ============================================================
+    // START CAMERA
+    // ============================================================
+
+    async function startCamera() {
+
+        try {
+
+            startButton.disabled = true;
+
+
+            setStatus(
+                "Requesting camera permission..."
+            );
+
+
+            stream =
+                await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: {
+                            ideal: 1280
+                        },
+
+                        height: {
+                            ideal: 720
+                        },
+
+                        facingMode: "user"
+                    },
+
+                    audio: false
+                });
+
+
+            video.srcObject =
+                stream;
+
+
+            await video.play();
+
+
+            canvas.width =
+                video.videoWidth;
+
+            canvas.height =
+                video.videoHeight;
+
+
+            stopButton.disabled =
+                false;
+
+
+            setStatus(
+                `Camera active: ` +
+                `${video.videoWidth} × ` +
+                `${video.videoHeight}`
+            );
+
+
+            // ----------------------------------------------------
+            // MediaPipe
+            // ----------------------------------------------------
+
+            if (!faceDetector) {
+
+                const initialized =
+                    await initializeFaceDetector();
+
+
+                if (!initialized) {
+
+                    setStatus(
+                        "Camera works, but MediaPipe failed."
+                    );
+
+                    return;
+                }
+            }
+
+
+            // ----------------------------------------------------
+            // ONNX
+            // ----------------------------------------------------
+
+            if (!ortSession) {
+
+                const initialized =
+                    await initializeONNX();
+
+
+                if (!initialized) {
+
+                    setStatus(
+                        "Camera + MediaPipe work, " +
+                        "but ONNX failed."
+                    );
+
+                    return;
+                }
+            }
+
+
+            setStatus(
+                "Camera + MediaPipe + ONNX active."
+            );
+
+
+            setDebug(
+                "Everything initialized successfully.\n\n" +
+                "Camera: OK\n" +
+                "MediaPipe: OK\n" +
+                "ONNX Runtime: OK\n" +
+                "Emotion model: OK\n\n" +
+                "Running FER..."
+            );
+
+
+            lastVideoTime = -1;
+
+            detectFaces();
+
+
+        } catch (error) {
+
+            console.error(
+                "Camera error:",
+                error
+            );
+
+
+            startButton.disabled =
+                false;
+
+            stopButton.disabled =
+                true;
+
+
+            setStatus(
+                "Camera error: " +
+                (
+                    error?.message ||
+                    error?.name ||
+                    String(error)
+                )
+            );
+
+
+            setDebug(
+                "Camera error:\n\n" +
+                (
+                    error?.stack ||
+                    error?.message ||
+                    String(error)
+                )
+            );
+        }
+    }
+
+
+    // ============================================================
+    // FACE DETECTION LOOP
+    // ============================================================
+
+    function detectFaces() {
+
+        if (
+            !stream ||
+            !faceDetector
+        ) {
+
+            return;
+        }
+
+
+        if (
+            video.readyState >= 2
+        ) {
+
+            if (
+                video.currentTime !==
+                lastVideoTime
+            ) {
+
+                lastVideoTime =
+                    video.currentTime;
+
+
+                try {
+
+                    const timestamp =
+                        performance.now();
+
+
+                    const results =
+                        faceDetector.detectForVideo(
+                            video,
+                            timestamp
+                        );
+
+
+                    drawResults(
+                        results
+                    );
+
+
+                } catch (error) {
+
+                    console.error(
+                        "Face detection error:",
+                        error
+                    );
+
+
+                    setDebug(
+                        "Face detection error:\n\n" +
+                        (
+                            error?.stack ||
+                            error?.message ||
+                            String(error)
+                        )
+                    );
+                }
+            }
+        }
+
+
+        animationFrameId =
+            requestAnimationFrame(
+                detectFaces
+            );
+    }
+
+
+    // ============================================================
+    // DRAW RESULTS
+    // ============================================================
+
+    function drawResults(
+        results
+    ) {
+
+        ctx.clearRect(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
+
+        if (
+            !results ||
+            !results.detections ||
+            results.detections.length === 0
+        ) {
+
+            emotionElement.textContent =
+                "No face detected";
+
+
+            probabilitiesElement.textContent =
+                "Waiting for a face...";
+
+            return;
+        }
+
+
+        // Find largest face.
+
+        let largestDetection =
+            null;
+
+        let largestArea =
+            0;
+
+
+        for (
+            const detection
+            of results.detections
+        ) {
+
+            const box =
+                detection.boundingBox;
+
+
+            if (!box) {
+                continue;
+            }
+
+
+            const area =
+                box.width *
+                box.height;
+
+
+            if (
+                area >
+                largestArea
+            ) {
+
+                largestArea =
+                    area;
+
+                largestDetection =
+                    detection;
+            }
+        }
+
+
+        if (!largestDetection) {
+            return;
+        }
+
+
+        const box =
+            largestDetection.boundingBox;
+
+
+        const x =
+            box.originX;
+
+        const y =
+            box.originY;
+
+        const width =
+            box.width;
+
+        const height =
+            box.height;
+
+
+        // Draw bounding box.
+
+        ctx.strokeStyle =
+            "#00ff66";
+
+        ctx.lineWidth =
+            4;
+
+
+        ctx.strokeRect(
+            x,
+            y,
+            width,
+            height
+        );
+
+
+        // Draw label.
+
+        ctx.fillStyle =
+            "#00ff66";
+
+        ctx.font =
+            "bold 20px Arial";
+
+
+        ctx.fillText(
+            "Face",
+            x,
+            Math.max(
+                y - 8,
+                20
+            )
+        );
+
+
+        // Run ONNX asynchronously.
+
+        runEmotionInference(
+            largestDetection
+        );
+    }
+
+
+    // ============================================================
+    // STOP CAMERA
+    // ============================================================
+
+    function stopCamera() {
+
+        if (
+            animationFrameId !== null
+        ) {
+
+            cancelAnimationFrame(
+                animationFrameId
+            );
+
+            animationFrameId =
+                null;
+        }
+
+
+        if (stream) {
+
+            stream
+                .getTracks()
+                .forEach(
+                    track =>
+                        track.stop()
+                );
+
+            stream = null;
+        }
+
+
+        video.srcObject =
+            null;
+
+
+        ctx.clearRect(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
+        // Reset temporal smoothing.
+        probabilityHistory = [];
+
+        emotionElement.textContent =
+            "Waiting for face...";
+
+
+        probabilitiesElement.textContent =
+            "Camera stopped.";
+
+
+        startButton.disabled =
+            false;
+
+        stopButton.disabled =
+            true;
+
+
+        setStatus(
+            "Camera stopped."
+        );
+
+
+        setDebug(
+            "Camera stopped."
+        );
+    }
+
+
+    // ============================================================
+    // BROWSER COMPATIBILITY
+    // ============================================================
+
+    if (
+        !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia
+    ) {
+
+        setStatus(
+            "Camera API unavailable."
+        );
+
+        setDebug(
+            "navigator.mediaDevices.getUserMedia() " +
+            "is not available."
+        );
+
+    } else {
+
+        setDebug(
+            "Browser camera API detected.\n" +
+            "Ready."
+        );
+    }
+
+
+    // ============================================================
+    // BUTTONS
+    // ============================================================
+
+    startButton.addEventListener(
+        "click",
+        startCamera
+    );
+
+
+    stopButton.addEventListener(
+        "click",
+        stopCamera
+    );
+
+</script>
+
+</body>
+</html>

@@ -1,0 +1,2979 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>MINDO AI - Integrated Session</title>
+
+    <!-- ONNX Runtime Web -->
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/ort.min.js"></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: Arial, Helvetica, sans-serif;
+            background:
+                radial-gradient(circle at top left, #1e293b 0%, transparent 35%),
+                radial-gradient(circle at bottom right, #172554 0%, transparent 35%),
+                #020617;
+            color: #e5e7eb;
+        }
+
+        .container {
+            width: min(1400px, 94%);
+            margin: 0 auto;
+            padding: 30px 0 40px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 38px;
+            letter-spacing: -1px;
+        }
+
+        header p {
+            margin: 8px 0 0;
+            color: #94a3b8;
+            font-size: 15px;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 22px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            border: none;
+            border-radius: 10px;
+            padding: 12px 22px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s ease;
+        }
+
+        #startButton {
+            background: #22c55e;
+            color: #052e16;
+        }
+
+        #startButton:hover:not(:disabled) {
+            background: #4ade80;
+            transform: translateY(-1px);
+        }
+
+        #stopButton {
+            background: #ef4444;
+            color: white;
+        }
+
+        #stopButton:hover:not(:disabled) {
+            background: #f87171;
+            transform: translateY(-1px);
+        }
+
+        button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status-bar {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            color: #cbd5e1;
+            font-size: 13px;
+        }
+
+        .status-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: #64748b;
+        }
+
+        .status-dot.active {
+            background: #22c55e;
+            box-shadow: 0 0 10px rgba(34, 197, 94, 0.7);
+        }
+
+        .status-dot.error {
+            background: #ef4444;
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.6);
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: minmax(360px, 1fr) minmax(360px, 1fr);
+            gap: 22px;
+            align-items: stretch;
+        }
+
+        .panel {
+            background: rgba(15, 23, 42, 0.86);
+            border: 1px solid #1e293b;
+            border-radius: 18px;
+            overflow: hidden;
+            box-shadow: 0 18px 50px rgba(0, 0, 0, 0.25);
+        }
+
+        .panel-header {
+            padding: 16px 18px;
+            border-bottom: 1px solid #1e293b;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .panel-header h2 {
+            margin: 0;
+            font-size: 18px;
+        }
+
+        .panel-header span {
+            color: #64748b;
+            font-size: 12px;
+        }
+
+        .panel-body {
+            padding: 18px;
+        }
+
+        /* CAMERA */
+
+        .camera-wrapper {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background: #000;
+            border-radius: 14px;
+            overflow: hidden;
+            border: 1px solid #334155;
+        }
+
+        #video {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        #faceCanvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1);
+            pointer-events: none;
+        }
+
+        .camera-overlay {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            padding: 6px 10px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.55);
+            color: #e2e8f0;
+            font-size: 12px;
+            backdrop-filter: blur(5px);
+        }
+
+        .fer-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .info-card {
+            padding: 14px;
+            border-radius: 12px;
+            background: #020617;
+            border: 1px solid #1e293b;
+        }
+
+        .info-label {
+            color: #64748b;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.7px;
+            margin-bottom: 6px;
+        }
+
+        .emotion-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #f8fafc;
+        }
+
+        .fer-status {
+            font-size: 13px;
+            color: #94a3b8;
+        }
+
+        .probabilities {
+            margin-top: 16px;
+        }
+
+        .probability-row {
+            display: grid;
+            grid-template-columns: 75px 1fr 52px;
+            align-items: center;
+            gap: 9px;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+
+        .probability-name {
+            color: #cbd5e1;
+        }
+
+        .probability-bar {
+            height: 7px;
+            background: #1e293b;
+            border-radius: 999px;
+            overflow: hidden;
+        }
+
+        .probability-fill {
+            height: 100%;
+            width: 0%;
+            background: #38bdf8;
+            border-radius: inherit;
+            transition: width 0.18s ease;
+        }
+
+        .probability-value {
+            text-align: right;
+            color: #94a3b8;
+        }
+
+        /* CONVERSATION */
+
+        .conversation {
+            height: 590px;
+            overflow-y: auto;
+            padding: 18px;
+            background: rgba(2, 6, 23, 0.45);
+        }
+
+        .empty-conversation {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            color: #64748b;
+            padding: 30px;
+        }
+
+        .message {
+            display: flex;
+            margin-bottom: 14px;
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message.ai {
+            justify-content: flex-start;
+        }
+
+        .message-bubble {
+            max-width: 78%;
+            padding: 11px 14px;
+            border-radius: 14px;
+            line-height: 1.5;
+            font-size: 14px;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .message.user .message-bubble {
+            background: #2563eb;
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.ai .message-bubble {
+            background: #1e293b;
+            color: #e2e8f0;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message-label {
+            font-size: 10px;
+            margin-bottom: 4px;
+            opacity: 0.65;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+        }
+
+        /* DEBUG */
+
+        .debug-panel {
+            margin-top: 22px;
+        }
+
+        #debug {
+            height: 180px;
+            overflow-y: auto;
+            padding: 14px;
+            background: #020617;
+            color: #94a3b8;
+            font-family: Consolas, Monaco, monospace;
+            font-size: 11px;
+            line-height: 1.55;
+            white-space: pre-wrap;
+        }
+
+        .architecture-note {
+            margin-top: 22px;
+            padding: 14px 16px;
+            border-radius: 12px;
+            background: rgba(15, 23, 42, 0.7);
+            border: 1px solid #1e293b;
+            color: #94a3b8;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .architecture-note strong {
+            color: #cbd5e1;
+        }
+
+        @media (max-width: 900px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .conversation {
+                height: 450px;
+            }
+        }
+
+        @media (max-width: 520px) {
+            .container {
+                width: 94%;
+                padding-top: 20px;
+            }
+
+            header h1 {
+                font-size: 30px;
+            }
+
+            .fer-info {
+                grid-template-columns: 1fr;
+            }
+
+            .message-bubble {
+                max-width: 88%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <header>
+        <h1>MINDO AI</h1>
+        <p>AI Conversation + Real-Time Facial Emotion Analysis</p>
+    </header>
+
+    <div class="controls">
+        <button id="startButton">Start Conversation</button>
+        <button id="stopButton" disabled>Stop Conversation</button>
+    </div>
+
+    <div class="status-bar">
+        <div class="status-pill">
+            <span id="sessionStatusDot" class="status-dot"></span>
+            <span id="sessionStatus">Session inactive</span>
+        </div>
+
+        <div class="status-pill">
+            <span id="ferStatusDot" class="status-dot"></span>
+            <span id="ferStatus">FER inactive</span>
+        </div>
+    </div>
+
+    <div class="main-grid">
+
+        <!-- ==================== FER PANEL ==================== -->
+
+        <section class="panel">
+
+            <div class="panel-header">
+                <h2>Facial Emotion</h2>
+                <span>Browser-side ONNX</span>
+            </div>
+
+            <div class="panel-body">
+
+                <div class="camera-wrapper">
+                    <video id="video" autoplay playsinline muted></video>
+                    <canvas id="faceCanvas"></canvas>
+
+                    <div class="camera-overlay">
+                        Camera analysis
+                    </div>
+                </div>
+
+                <div class="fer-info">
+
+                    <div class="info-card">
+                        <div class="info-label">
+                            Dominant Emotion
+                        </div>
+
+                        <div id="emotionValue" class="emotion-value">
+                            —
+                        </div>
+                    </div>
+
+                    <div class="info-card">
+                        <div class="info-label">
+                            Smoothing
+                        </div>
+
+                        <div id="smoothingValue" class="emotion-value">
+                            0 / 8
+                        </div>
+                    </div>
+
+                </div>
+
+                <div class="probabilities" id="probabilities">
+
+                    <div class="probability-row">
+                        <span class="probability-name">Angry</span>
+                        <div class="probability-bar">
+                            <div class="probability-fill" id="bar-angry"></div>
+                        </div>
+                        <span class="probability-value" id="value-angry">0%</span>
+                    </div>
+
+                    <div class="probability-row">
+                        <span class="probability-name">Disgust</span>
+                        <div class="probability-bar">
+                            <div class="probability-fill" id="bar-disgust"></div>
+                        </div>
+                        <span class="probability-value" id="value-disgust">0%</span>
+                    </div>
+
+                    <div class="probability-row">
+                        <span class="probability-name">Fear</span>
+                        <div class="probability-bar">
+                            <div class="probability-fill" id="bar-fear"></div>
+                        </div>
+                        <span class="probability-value" id="value-fear">0%</span>
+                    </div>
+
+                    <div class="probability-row">
+                        <span class="probability-name">Happy</span>
+                        <div class="probability-bar">
+                            <div class="probability-fill" id="bar-happy"></div>
+                        </div>
+                        <span class="probability-value" id="value-happy">0%</span>
+                    </div>
+
+                    <div class="probability-row">
+                        <span class="probability-name">Neutral</span>
+                        <div class="probability-bar">
+                            <div class="probability-fill" id="bar-neutral"></div>
+                        </div>
+                        <span class="probability-value" id="value-neutral">0%</span>
+                    </div>
+
+                    <div class="probability-row">
+                        <span class="probability-name">Sad</span>
+                        <div class="probability-bar">
+                            <div class="probability-fill" id="bar-sad"></div>
+                        </div>
+                        <span class="probability-value" id="value-sad">0%</span>
+                    </div>
+
+                    <div class="probability-row">
+                        <span class="probability-name">Surprise</span>
+                        <div class="probability-bar">
+                            <div class="probability-fill" id="bar-surprise"></div>
+                        </div>
+                        <span class="probability-value" id="value-surprise">0%</span>
+                    </div>
+
+                </div>
+
+            </div>
+        </section>
+
+
+        <!-- ==================== CONVERSATION PANEL ==================== -->
+
+        <section class="panel">
+
+            <div class="panel-header">
+                <h2>Conversation</h2>
+                <span>Gemini Live</span>
+            </div>
+
+            <div id="conversation" class="conversation">
+
+                <div id="emptyConversation" class="empty-conversation">
+                    Start a conversation to begin.
+                </div>
+
+            </div>
+
+        </section>
+
+    </div>
+
+
+    <!-- ==================== DEBUG PANEL ==================== -->
+
+    <section class="panel debug-panel">
+
+        <div class="panel-header">
+            <h2>Debug</h2>
+            <span>Integration diagnostics</span>
+        </div>
+
+        <div id="debug"></div>
+
+    </section>
+
+
+    <div class="architecture-note">
+        <strong>Integration:</strong>
+        Microphone audio is streamed to Gemini through the WebSocket.
+        Facial emotion inference runs locally in the browser using MediaPipe + ONNX Runtime Web.
+        FER emotion snapshots are sent separately to the backend and are
+        <strong>never sent to Gemini</strong>.
+        Browser-side voice activity detection records user speech start and end
+        timestamps independently from transcription timing.
+    </div>
+
+</div>
+
+
+<script type="module">
+
+    /* ============================================================
+       MEDIAPIPE
+       ============================================================ */
+
+    import {
+        FaceDetector,
+        FilesetResolver
+    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs";
+
+
+    /* ============================================================
+       DOM ELEMENTS
+       ============================================================ */
+
+    const startButton = document.getElementById("startButton");
+    const stopButton = document.getElementById("stopButton");
+
+    const sessionStatus = document.getElementById("sessionStatus");
+    const sessionStatusDot = document.getElementById("sessionStatusDot");
+
+    const ferStatus = document.getElementById("ferStatus");
+    const ferStatusDot = document.getElementById("ferStatusDot");
+
+    const video = document.getElementById("video");
+    const faceCanvas = document.getElementById("faceCanvas");
+    const faceCtx = faceCanvas.getContext("2d");
+
+    const emotionValue = document.getElementById("emotionValue");
+    const smoothingValue = document.getElementById("smoothingValue");
+
+    const conversation = document.getElementById("conversation");
+    const emptyConversation = document.getElementById("emptyConversation");
+
+    const debugElement = document.getElementById("debug");
+
+
+    /* ============================================================
+       GEMINI STATE
+       ============================================================ */
+
+    let socket = null;
+
+    let audioContext = null;
+    let playbackContext = null;
+
+    let mediaStream = null;
+    let microphoneSource = null;
+    let processor = null;
+
+    let audioFramesSent = 0;
+    let audioChunksReceived = 0;
+
+    let nextPlaybackTime = 0;
+
+
+    /* ============================================================
+       USER SPEECH / VAD STATE
+       ============================================================ */
+
+    /*
+     * The VAD runs directly on the same microphone PCM data
+     * that is already being streamed to Gemini.
+     *
+     * No second microphone stream is created.
+     */
+
+    let userSpeechActive = false;
+
+    let speechStartCandidate = false;
+    let speechStartCandidateBlocks = 0;
+
+    let silenceBlocks = 0;
+
+    /*
+     * ScriptProcessor uses 4096 samples at 16 kHz:
+     *
+     * 4096 / 16000 = approximately 256 ms per block.
+     */
+
+    const VAD_SAMPLE_RATE = 16000;
+
+    /*
+     * RMS above this level is considered potentially speech.
+     *
+     * The value is intentionally conservative for the first
+     * implementation. We will tune it after real testing.
+     */
+    const VAD_RMS_THRESHOLD = 0.018;
+
+    /*
+     * Require multiple consecutive blocks before declaring
+     * that speech has actually started.
+     *
+     * 2 blocks ~= 512 ms.
+     */
+    const VAD_START_CONFIRMATION_BLOCKS = 2;
+
+    /*
+     * Require approximately 1.28 seconds of silence before
+     * declaring speech ended.
+     *
+     * 5 blocks ~= 1280 ms.
+     *
+     * This prevents normal tiny pauses between words from
+     * splitting a single sentence into multiple speech turns.
+     */
+    const VAD_END_SILENCE_BLOCKS = 5;
+
+    let speechIntervalsDetected = 0;
+
+
+    /* ============================================================
+       FER STATE
+       ============================================================ */
+
+    let stream = null;
+
+    let faceDetector = null;
+    let ortSession = null;
+
+    let animationFrameId = null;
+
+    let lastVideoTime = -1;
+    let inferenceRunning = false;
+    let lastInferenceTime = 0;
+
+    const SMOOTHING_WINDOW = 8;
+    const probabilityHistory = [];
+
+    const INFERENCE_INTERVAL_MS = 200;
+
+    /*
+     * FER can run approximately 5 times per second,
+     * but we only store one emotion snapshot per second.
+     */
+    const EMOTION_SEND_INTERVAL_MS = 1000;
+
+    let lastEmotionSendTime = 0;
+    let emotionSnapshotsSent = 0;
+
+    const MODEL_URL = "./models/emotion_model_best.onnx";
+
+    const EMOTIONS = [
+        "angry",
+        "disgust",
+        "fear",
+        "happy",
+        "neutral",
+        "sad",
+        "surprise"
+    ];
+
+    const IMAGENET_MEAN = [
+        0.485,
+        0.456,
+        0.406
+    ];
+
+    const IMAGENET_STD = [
+        0.229,
+        0.224,
+        0.225
+    ];
+
+
+    /* ============================================================
+       SESSION STATE
+       ============================================================ */
+
+    let sessionActive = false;
+
+
+    /* ============================================================
+       DEBUG
+       ============================================================ */
+
+    function debug(message) {
+
+        const timestamp = new Date().toLocaleTimeString();
+
+        debugElement.textContent +=
+            `[${timestamp}] ${message}\n`;
+
+        debugElement.scrollTop = debugElement.scrollHeight;
+
+        console.log(message);
+    }
+
+
+    /* ============================================================
+       STATUS
+       ============================================================ */
+
+    function setSessionStatus(message, state = "inactive") {
+
+        sessionStatus.textContent = message;
+
+        sessionStatusDot.className = "status-dot";
+
+        if (state === "active") {
+            sessionStatusDot.classList.add("active");
+        }
+
+        if (state === "error") {
+            sessionStatusDot.classList.add("error");
+        }
+    }
+
+
+    function setFERStatus(message, state = "inactive") {
+
+        ferStatus.textContent = message;
+
+        ferStatusDot.className = "status-dot";
+
+        if (state === "active") {
+            ferStatusDot.classList.add("active");
+        }
+
+        if (state === "error") {
+            ferStatusDot.classList.add("error");
+        }
+    }
+
+
+    /* ============================================================
+       START CONVERSATION
+       ============================================================ */
+
+    async function startConversation() {
+
+        if (sessionActive) {
+            return;
+        }
+
+        sessionActive = true;
+
+        startButton.disabled = true;
+        stopButton.disabled = false;
+
+        setSessionStatus(
+            "Connecting to Gemini...",
+            "active"
+        );
+
+        debug("Starting integrated session...");
+
+        /*
+         * Reset session-specific state.
+         */
+        audioFramesSent = 0;
+        audioChunksReceived = 0;
+        nextPlaybackTime = 0;
+
+        lastEmotionSendTime = 0;
+        emotionSnapshotsSent = 0;
+
+        resetVAD();
+
+        resetEmotionUI();
+        resetConversationUI();
+
+        try {
+
+            /*
+             * Create playback context first.
+             */
+            playbackContext = new AudioContext({
+                sampleRate: 24000
+            });
+
+            /*
+             * Create the WebSocket used by Gemini.
+             *
+             * IMPORTANT:
+             * The same WebSocket is also used to send FER
+             * JSON messages and speech timing events.
+             *
+             * FER data and VAD data are handled separately
+             * by the backend.
+             */
+            socket = new WebSocket(
+                "ws://127.0.0.1:8000/ws/realtime"
+            );
+
+            socket.binaryType = "arraybuffer";
+
+
+            socket.onopen = async () => {
+
+                debug("WebSocket connected.");
+
+                setSessionStatus(
+                    "Connected — starting camera and microphone...",
+                    "active"
+                );
+
+                try {
+
+                    /*
+                     * Start both pipelines.
+                     *
+                     * They are independent:
+                     *
+                     * Microphone -> Gemini + VAD
+                     * Camera -> MediaPipe -> ONNX -> backend
+                     */
+                    await startMicrophone();
+
+                    await startCamera();
+
+                    setSessionStatus(
+                        "Conversation active",
+                        "active"
+                    );
+
+                    debug(
+                        "Integrated session fully started."
+                    );
+
+                } catch (error) {
+
+                    debug(
+                        `Startup error: ${error.message}`
+                    );
+
+                    setSessionStatus(
+                        "Startup failed",
+                        "error"
+                    );
+
+                    await stopConversation();
+                }
+            };
+
+
+            socket.onmessage = async (event) => {
+
+                /*
+                 * Gemini audio response.
+                 */
+                if (event.data instanceof ArrayBuffer) {
+
+                    audioChunksReceived++;
+
+                    playGeminiAudio(
+                        event.data
+                    );
+
+                    return;
+                }
+
+
+                /*
+                 * Some browsers may deliver binary data as Blob.
+                 */
+                if (event.data instanceof Blob) {
+
+                    const buffer =
+                        await event.data.arrayBuffer();
+
+                    audioChunksReceived++;
+
+                    playGeminiAudio(buffer);
+
+                    return;
+                }
+
+
+                /*
+                 * JSON messages from backend.
+                 */
+                if (typeof event.data === "string") {
+
+                    try {
+
+                        const data = JSON.parse(event.data);
+
+                        if (data.type === "transcription") {
+                            updateLiveTranscription(
+                                data.role,
+                                data.text || ""
+                            );
+                            return;
+                        }
+
+                        if (data.type === "transcription_interim") {
+                            /*
+                             * Interim user transcription is intentionally
+                             * not rendered separately because finalized
+                             * transcription chunks arrive through the normal
+                             * transcription event.
+                             */
+                            return;
+                        }
+
+                        if (data.type === "error") {
+                            debug(`Backend error: ${data.message || "Unknown error"}`);
+                            setSessionStatus("Backend error", "error");
+                            return;
+                        }
+
+                    } catch (error) {
+                        debug(`Invalid JSON from backend: ${error.message}`);
+                    }
+                }
+            };
+
+
+            socket.onerror = (error) => {
+
+                debug("WebSocket error.");
+
+                setSessionStatus(
+                    "WebSocket error",
+                    "error"
+                );
+            };
+
+
+            socket.onclose = () => {
+
+                debug("WebSocket closed.");
+
+                if (sessionActive) {
+
+                    sessionActive = false;
+
+                    /*
+                     * If the user was speaking when the connection
+                     * disappeared, close the VAD interval cleanly.
+                     */
+                    finishUserSpeechIfActive();
+
+                    stopMicrophone();
+                    stopCamera();
+
+                    startButton.disabled = false;
+                    stopButton.disabled = true;
+
+                    setSessionStatus(
+                        "Session disconnected",
+                        "inactive"
+                    );
+                }
+            };
+
+        } catch (error) {
+
+            debug(
+                `Failed to start session: ${error.message}`
+            );
+
+            await stopConversation();
+        }
+    }
+
+
+    /* ============================================================
+       MICROPHONE
+       ============================================================ */
+
+    async function startMicrophone() {
+
+        debug("Requesting microphone access...");
+
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                channelCount: 1,
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+            },
+            video: false
+        });
+
+        debug("Microphone access granted.");
+
+        audioContext = new AudioContext({
+            sampleRate: 16000
+        });
+
+        debug(
+            `Microphone AudioContext sample rate: ${audioContext.sampleRate} Hz`
+        );
+
+        microphoneSource =
+            audioContext.createMediaStreamSource(
+                mediaStream
+            );
+
+        /*
+         * Keep the same working ScriptProcessor approach
+         * from the existing Gemini frontend.
+         */
+        processor =
+            audioContext.createScriptProcessor(
+                4096,
+                1,
+                1
+            );
+
+        processor.onaudioprocess = (event) => {
+
+            /*
+             * Get the microphone block once.
+             *
+             * The same data is then used for:
+             *
+             * 1. Gemini PCM streaming
+             * 2. User speech detection
+             */
+            const inputData =
+                event.inputBuffer.getChannelData(0);
+
+
+            /*
+             * --------------------------------------------
+             * USER SPEECH DETECTION
+             * --------------------------------------------
+             */
+            processVoiceActivity(inputData);
+
+
+            /*
+             * --------------------------------------------
+             * GEMINI AUDIO STREAMING
+             * --------------------------------------------
+             */
+            if (
+                !socket ||
+                socket.readyState !== WebSocket.OPEN
+            ) {
+                return;
+            }
+
+            const pcm16 =
+                convertFloat32ToPCM16(inputData);
+
+            socket.send(pcm16);
+
+            audioFramesSent++;
+        };
+
+        microphoneSource.connect(processor);
+
+        /*
+         * Connecting the processor to destination keeps
+         * ScriptProcessorNode active in browsers.
+         *
+         * The input is microphone audio; echo cancellation
+         * is enabled above.
+         */
+        processor.connect(
+            audioContext.destination
+        );
+
+        debug("Microphone streaming started.");
+        debug("User speech timing detection started.");
+    }
+
+
+    /* ============================================================
+       USER SPEECH / VOICE ACTIVITY DETECTION
+       ============================================================ */
+
+    function processVoiceActivity(inputData) {
+
+        if (!sessionActive) {
+            return;
+        }
+
+        if (!inputData || inputData.length === 0) {
+            return;
+        }
+
+
+        /*
+         * Calculate RMS energy for this microphone block.
+         *
+         * RMS is:
+         *
+         * sqrt(
+         *   average(
+         *     sample^2
+         *   )
+         * )
+         */
+        let sumSquares = 0;
+
+        for (
+            let i = 0;
+            i < inputData.length;
+            i++
+        ) {
+
+            const sample =
+                inputData[i];
+
+            sumSquares +=
+                sample * sample;
+        }
+
+        const rms =
+            Math.sqrt(
+                sumSquares /
+                inputData.length
+            );
+
+
+        /*
+         * Determine whether this block contains enough
+         * audio energy to be considered speech.
+         */
+        const speechDetected =
+            rms >= VAD_RMS_THRESHOLD;
+
+
+        /*
+         * ----------------------------------------------------
+         * CASE 1: USER IS CURRENTLY SPEAKING
+         * ----------------------------------------------------
+         */
+        if (userSpeechActive) {
+
+            if (speechDetected) {
+
+                /*
+                 * Voice is still present.
+                 *
+                 * Reset the silence counter because the user
+                 * is still speaking.
+                 */
+                silenceBlocks = 0;
+
+                return;
+            }
+
+
+            /*
+             * The current block looks like silence.
+             *
+             * Do not immediately end the speech interval.
+             *
+             * Normal speech contains short pauses between words.
+             */
+            silenceBlocks++;
+
+
+            if (
+                silenceBlocks >=
+                VAD_END_SILENCE_BLOCKS
+            ) {
+
+                finishUserSpeechIfActive();
+            }
+
+            return;
+        }
+
+
+        /*
+         * ----------------------------------------------------
+         * CASE 2: USER IS CURRENTLY NOT SPEAKING
+         * ----------------------------------------------------
+         */
+
+        if (speechDetected) {
+
+            speechStartCandidateBlocks++;
+
+            /*
+             * Require multiple consecutive speech blocks.
+             *
+             * This prevents a single click, keyboard sound,
+             * chair movement, or other short noise from
+             * creating a speech interval.
+             */
+            if (
+                speechStartCandidateBlocks >=
+                VAD_START_CONFIRMATION_BLOCKS
+            ) {
+
+                startUserSpeech();
+            }
+
+            return;
+        }
+
+
+        /*
+         * Current block is still silence.
+         *
+         * Reset the speech candidate.
+         */
+        speechStartCandidateBlocks = 0;
+    }
+
+
+    function startUserSpeech() {
+
+        if (userSpeechActive) {
+            return;
+        }
+
+        userSpeechActive = true;
+
+        speechStartCandidate = false;
+
+        speechStartCandidateBlocks = 0;
+
+        silenceBlocks = 0;
+
+        speechIntervalsDetected++;
+
+
+        /*
+         * Date.now() gives us an actual wall-clock timestamp
+         * that can later be converted into an ISO timestamp
+         * by the backend.
+         */
+        const timestamp =
+            Date.now();
+
+
+        debug(
+            `USER SPEECH START — ${new Date(timestamp).toISOString()}`
+        );
+
+
+        sendSpeechEvent(
+            "speech_start",
+            timestamp
+        );
+    }
+
+
+    function finishUserSpeechIfActive() {
+
+        if (!userSpeechActive) {
+            return;
+        }
+
+        userSpeechActive = false;
+
+        speechStartCandidate = false;
+
+        speechStartCandidateBlocks = 0;
+
+        silenceBlocks = 0;
+
+
+        const timestamp =
+            Date.now();
+
+
+        debug(
+            `USER SPEECH END — ${new Date(timestamp).toISOString()}`
+        );
+
+
+        sendSpeechEvent(
+            "speech_end",
+            timestamp
+        );
+    }
+
+
+    function sendSpeechEvent(
+        eventType,
+        timestamp
+    ) {
+
+        if (
+            !socket ||
+            socket.readyState !== WebSocket.OPEN
+        ) {
+
+            /*
+             * This should normally not happen because VAD
+             * runs while the session is active.
+             *
+             * We still guard against it for safety.
+             */
+            debug(
+                `Could not send ${eventType}: WebSocket unavailable.`
+            );
+
+            return;
+        }
+
+
+        const speechMessage = {
+
+            type: eventType,
+
+            timestamp: timestamp
+        };
+
+
+        try {
+
+            socket.send(
+                JSON.stringify(
+                    speechMessage
+                )
+            );
+
+        } catch (error) {
+
+            debug(
+                `Failed to send ${eventType}: ${error.message}`
+            );
+        }
+    }
+
+
+    function resetVAD() {
+
+        /*
+         * If reset happens while the user is speaking,
+         * do not attempt to send an event here because the
+         * WebSocket may not exist yet.
+         */
+        userSpeechActive = false;
+
+        speechStartCandidate = false;
+
+        speechStartCandidateBlocks = 0;
+
+        silenceBlocks = 0;
+
+        speechIntervalsDetected = 0;
+    }
+
+
+    function convertFloat32ToPCM16(float32Array) {
+
+        const buffer =
+            new ArrayBuffer(
+                float32Array.length * 2
+            );
+
+        const view =
+            new DataView(buffer);
+
+        let offset = 0;
+
+        for (
+            let i = 0;
+            i < float32Array.length;
+            i++,
+            offset += 2
+        ) {
+
+            let sample =
+                Math.max(
+                    -1,
+                    Math.min(
+                        1,
+                        float32Array[i]
+                    )
+                );
+
+            sample =
+                sample < 0
+                    ? sample * 0x8000
+                    : sample * 0x7fff;
+
+            view.setInt16(
+                offset,
+                sample,
+                true
+            );
+        }
+
+        return buffer;
+    }
+
+
+    /* ============================================================
+       GEMINI AUDIO PLAYBACK
+       ============================================================ */
+
+    function playGeminiAudio(arrayBuffer) {
+
+        if (!playbackContext) {
+            return;
+        }
+
+        const int16Array =
+            new Int16Array(arrayBuffer);
+
+        if (!int16Array.length) {
+            return;
+        }
+
+        const audioBuffer =
+            playbackContext.createBuffer(
+                1,
+                int16Array.length,
+                24000
+            );
+
+        const channelData =
+            audioBuffer.getChannelData(0);
+
+        for (
+            let i = 0;
+            i < int16Array.length;
+            i++
+        ) {
+
+            channelData[i] =
+                int16Array[i] / 32768;
+        }
+
+        const source =
+            playbackContext.createBufferSource();
+
+        source.buffer = audioBuffer;
+
+        source.connect(
+            playbackContext.destination
+        );
+
+        const currentTime =
+            playbackContext.currentTime;
+
+        if (nextPlaybackTime < currentTime) {
+            nextPlaybackTime = currentTime;
+        }
+
+        source.start(nextPlaybackTime);
+
+        nextPlaybackTime +=
+            audioBuffer.duration;
+    }
+
+
+    /* ============================================================
+       CAMERA / FER INITIALIZATION
+       ============================================================ */
+
+    async function startCamera() {
+
+        debug("Requesting camera access...");
+
+        stream =
+            await navigator.mediaDevices.getUserMedia({
+                video: {
+                    width: {
+                        ideal: 1280
+                    },
+                    height: {
+                        ideal: 720
+                    },
+                    facingMode: "user"
+                },
+                audio: false
+            });
+
+        debug("Camera access granted.");
+
+        video.srcObject = stream;
+
+        await video.play();
+
+        faceCanvas.width =
+            video.videoWidth || 1280;
+
+        faceCanvas.height =
+            video.videoHeight || 720;
+
+        debug(
+            `Camera resolution: ${video.videoWidth}x${video.videoHeight}`
+        );
+
+
+        await initializeFaceDetector();
+
+        await initializeONNX();
+
+
+        /*
+         * Reset detection/inference state.
+         */
+        lastVideoTime = -1;
+        lastInferenceTime = 0;
+        lastEmotionSendTime = 0;
+
+        probabilityHistory.length = 0;
+
+        setFERStatus(
+            "FER active",
+            "active"
+        );
+
+        debug(
+            "FER pipeline initialized."
+        );
+
+        detectFaces();
+    }
+
+
+    async function initializeFaceDetector() {
+
+        if (faceDetector) {
+
+            debug(
+                "MediaPipe FaceDetector already initialized."
+            );
+
+            return;
+        }
+
+        debug(
+            "Loading MediaPipe face detector..."
+        );
+
+        const vision =
+            await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm"
+            );
+
+        faceDetector =
+            await FaceDetector.createFromOptions(
+                vision,
+                {
+                    baseOptions: {
+                        modelAssetPath:
+                            "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
+                        delegate: "CPU"
+                    },
+
+                    runningMode: "VIDEO",
+
+                    minDetectionConfidence: 0.6
+                }
+            );
+
+        debug(
+            "MediaPipe FaceDetector ready."
+        );
+    }
+
+
+    async function initializeONNX() {
+
+        if (ortSession) {
+
+            debug(
+                "ONNX emotion model already initialized."
+            );
+
+            return;
+        }
+
+        if (
+            typeof ort === "undefined"
+        ) {
+
+            throw new Error(
+                "ONNX Runtime Web was not loaded."
+            );
+        }
+
+        debug(
+            "Loading ONNX Runtime Web..."
+        );
+
+        /*
+         * Explicitly use WASM.
+         *
+         * This is intentional:
+         *
+         * - CPU works
+         * - NVIDIA GPU is NOT required
+         * - AMD/Intel/Mac users are supported
+         * - deployment remains hardware-independent
+         */
+        ort.env.wasm.wasmPaths =
+            "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/";
+
+        debug(
+            "Loading emotion ONNX model..."
+        );
+
+        ortSession =
+            await ort.InferenceSession.create(
+                MODEL_URL,
+                {
+                    executionProviders: [
+                        "wasm"
+                    ],
+                    graphOptimizationLevel:
+                        "all"
+                }
+            );
+
+        debug(
+            `ONNX model loaded. Input: ${ortSession.inputNames[0]}, Output: ${ortSession.outputNames[0]}`
+        );
+    }
+
+
+    /* ============================================================
+       FACE DETECTION LOOP
+       ============================================================ */
+
+    function detectFaces() {
+
+        if (!sessionActive) {
+            return;
+        }
+
+        if (
+            !video ||
+            video.readyState <
+            HTMLMediaElement.HAVE_CURRENT_DATA
+        ) {
+
+            animationFrameId =
+                requestAnimationFrame(
+                    detectFaces
+                );
+
+            return;
+        }
+
+        try {
+
+            if (
+                video.currentTime !==
+                lastVideoTime
+            ) {
+
+                lastVideoTime =
+                    video.currentTime;
+
+                const results =
+                    faceDetector.detectForVideo(
+                        video,
+                        performance.now()
+                    );
+
+                drawResults(results);
+            }
+
+        } catch (error) {
+
+            debug(
+                `Face detection error: ${error.message}`
+            );
+        }
+
+        animationFrameId =
+            requestAnimationFrame(
+                detectFaces
+            );
+    }
+
+
+    /* ============================================================
+       DRAW FACE + RUN FER
+       ============================================================ */
+
+    function drawResults(results) {
+
+        faceCtx.clearRect(
+            0,
+            0,
+            faceCanvas.width,
+            faceCanvas.height
+        );
+
+        if (
+            !results ||
+            !results.detections ||
+            results.detections.length === 0
+        ) {
+
+            setFERStatus(
+                "FER active — no face detected",
+                "active"
+            );
+
+            return;
+        }
+
+
+        /*
+         * Select the largest detected face.
+         *
+         * This is useful when there are accidental
+         * background detections.
+         */
+        let selectedDetection =
+            results.detections[0];
+
+        let largestArea = 0;
+
+        for (
+            const detection
+            of results.detections
+        ) {
+
+            const box =
+                detection.boundingBox;
+
+            if (!box) {
+                continue;
+            }
+
+            const area =
+                box.width * box.height;
+
+            if (area > largestArea) {
+
+                largestArea = area;
+
+                selectedDetection =
+                    detection;
+            }
+        }
+
+
+        const box =
+            selectedDetection.boundingBox;
+
+        if (!box) {
+            return;
+        }
+
+
+        const x =
+            Math.max(
+                0,
+                box.originX
+            );
+
+        const y =
+            Math.max(
+                0,
+                box.originY
+            );
+
+        const width =
+            Math.min(
+                box.width,
+                faceCanvas.width - x
+            );
+
+        const height =
+            Math.min(
+                box.height,
+                faceCanvas.height - y
+            );
+
+
+        /*
+         * Face bounding box.
+         */
+        faceCtx.strokeStyle = "#22c55e";
+        faceCtx.lineWidth = 3;
+
+        faceCtx.strokeRect(
+            x,
+            y,
+            width,
+            height
+        );
+
+
+        faceCtx.fillStyle =
+            "rgba(34, 197, 94, 0.85)";
+
+        faceCtx.font =
+            "bold 14px Arial";
+
+        faceCtx.fillText(
+            "Face",
+            x + 6,
+            Math.max(
+                18,
+                y + 18
+            )
+        );
+
+
+        /*
+         * Run emotion inference.
+         */
+        runEmotionInference(
+            selectedDetection
+        );
+    }
+
+
+    /* ============================================================
+       EMOTION INFERENCE
+       ============================================================ */
+
+    async function runEmotionInference(
+        detection
+    ) {
+
+        if (
+            inferenceRunning ||
+            !ortSession
+        ) {
+            return;
+        }
+
+        const now =
+            performance.now();
+
+        if (
+            now - lastInferenceTime <
+            INFERENCE_INTERVAL_MS
+        ) {
+            return;
+        }
+
+        lastInferenceTime = now;
+
+        inferenceRunning = true;
+
+        try {
+
+            const inputTensor =
+                createInputTensor(
+                    detection
+                );
+
+            const feeds = {};
+
+            feeds[
+                ortSession.inputNames[0]
+            ] = inputTensor;
+
+
+            const output =
+                await ortSession.run(
+                    feeds
+                );
+
+
+            const outputTensor =
+                output[
+                    ortSession.outputNames[0]
+                ];
+
+
+            const logits =
+                Array.from(
+                    outputTensor.data
+                );
+
+
+            const probabilities =
+                softmax(logits);
+
+
+            const smoothedProbabilities =
+                smoothProbabilities(
+                    probabilities
+                );
+
+
+            let maxIndex = 0;
+
+            for (
+                let i = 1;
+                i < smoothedProbabilities.length;
+                i++
+            ) {
+
+                if (
+                    smoothedProbabilities[i] >
+                    smoothedProbabilities[maxIndex]
+                ) {
+
+                    maxIndex = i;
+                }
+            }
+
+
+            const predictedEmotion =
+                EMOTIONS[maxIndex];
+
+
+            displayEmotion(
+                predictedEmotion,
+                smoothedProbabilities
+            );
+
+
+            /*
+             * IMPORTANT:
+             *
+             * This sends FER information ONLY to the
+             * backend session store.
+             *
+             * It does NOT go to Gemini.
+             */
+            sendEmotionSnapshot(
+                predictedEmotion,
+                smoothedProbabilities
+            );
+
+        } catch (error) {
+
+            debug(
+                `Emotion inference error: ${error.message}`
+            );
+
+        } finally {
+
+            inferenceRunning = false;
+        }
+    }
+
+
+    /* ============================================================
+       CREATE MODEL INPUT
+       ============================================================ */
+
+    function createInputTensor(
+        detection
+    ) {
+
+        const box =
+            detection.boundingBox;
+
+        const videoWidth =
+            video.videoWidth;
+
+        const videoHeight =
+            video.videoHeight;
+
+
+        let x =
+            Math.max(
+                0,
+                box.originX
+            );
+
+        let y =
+            Math.max(
+                0,
+                box.originY
+            );
+
+        let width =
+            Math.min(
+                box.width,
+                videoWidth - x
+            );
+
+        let height =
+            Math.min(
+                box.height,
+                videoHeight - y
+            );
+
+
+        /*
+         * Safety check.
+         */
+        if (
+            width <= 1 ||
+            height <= 1
+        ) {
+
+            throw new Error(
+                "Invalid face bounding box."
+            );
+        }
+
+
+        /*
+         * Offscreen canvas for the 224x224 model input.
+         */
+        const inputCanvas =
+            document.createElement("canvas");
+
+        inputCanvas.width = 224;
+        inputCanvas.height = 224;
+
+        const ctx =
+            inputCanvas.getContext(
+                "2d",
+                {
+                    willReadFrequently: true
+                }
+            );
+
+
+        /*
+         * Draw the original face crop.
+         *
+         * The model receives RGB values.
+         */
+        ctx.drawImage(
+            video,
+            x,
+            y,
+            width,
+            height,
+            0,
+            0,
+            224,
+            224
+        );
+
+
+        const imageData =
+            ctx.getImageData(
+                0,
+                0,
+                224,
+                224
+            );
+
+
+        const data =
+            imageData.data;
+
+
+        /*
+         * NCHW:
+         *
+         * [1, 3, 224, 224]
+         */
+        const input =
+            new Float32Array(
+                1 * 3 * 224 * 224
+            );
+
+
+        const channelSize =
+            224 * 224;
+
+
+        for (
+            let i = 0;
+            i < 224 * 224;
+            i++
+        ) {
+
+            const pixelIndex =
+                i * 4;
+
+            const r =
+                data[pixelIndex] / 255;
+
+            const g =
+                data[pixelIndex + 1] / 255;
+
+            const b =
+                data[pixelIndex + 2] / 255;
+
+
+            input[i] =
+                (r - IMAGENET_MEAN[0]) /
+                IMAGENET_STD[0];
+
+            input[
+                channelSize + i
+            ] =
+                (g - IMAGENET_MEAN[1]) /
+                IMAGENET_STD[1];
+
+            input[
+                channelSize * 2 + i
+            ] =
+                (b - IMAGENET_MEAN[2]) /
+                IMAGENET_STD[2];
+        }
+
+
+        return new ort.Tensor(
+            "float32",
+            input,
+            [
+                1,
+                3,
+                224,
+                224
+            ]
+        );
+    }
+
+
+    /* ============================================================
+       SOFTMAX
+       ============================================================ */
+
+    function softmax(logits) {
+
+        const maxLogit =
+            Math.max(...logits);
+
+        const exps =
+            logits.map(
+                value =>
+                    Math.exp(
+                        value - maxLogit
+                    )
+            );
+
+        const sum =
+            exps.reduce(
+                (a, b) => a + b,
+                0
+            );
+
+        return exps.map(
+            value =>
+                value / sum
+        );
+    }
+
+
+    /* ============================================================
+       TEMPORAL SMOOTHING
+       ============================================================ */
+
+    function smoothProbabilities(
+        probabilities
+    ) {
+
+        probabilityHistory.push(
+            probabilities
+        );
+
+
+        if (
+            probabilityHistory.length >
+            SMOOTHING_WINDOW
+        ) {
+
+            probabilityHistory.shift();
+        }
+
+
+        const smoothed =
+            new Array(
+                EMOTIONS.length
+            ).fill(0);
+
+
+        for (
+            const frame
+            of probabilityHistory
+        ) {
+
+            for (
+                let i = 0;
+                i < frame.length;
+                i++
+            ) {
+
+                smoothed[i] +=
+                    frame[i];
+            }
+        }
+
+
+        for (
+            let i = 0;
+            i < smoothed.length;
+            i++
+        ) {
+
+            smoothed[i] /=
+                probabilityHistory.length;
+        }
+
+
+        return smoothed;
+    }
+
+
+    /* ============================================================
+       DISPLAY EMOTION
+       ============================================================ */
+
+    function displayEmotion(
+        emotion,
+        probabilities
+    ) {
+
+        emotionValue.textContent =
+            emotion.charAt(0).toUpperCase() +
+            emotion.slice(1);
+
+
+        smoothingValue.textContent =
+            `${probabilityHistory.length} / ${SMOOTHING_WINDOW}`;
+
+
+        for (
+            let i = 0;
+            i < EMOTIONS.length;
+            i++
+        ) {
+
+            const emotionName =
+                EMOTIONS[i];
+
+            const percentage =
+                probabilities[i] * 100;
+
+
+            const bar =
+                document.getElementById(
+                    `bar-${emotionName}`
+                );
+
+            const value =
+                document.getElementById(
+                    `value-${emotionName}`
+                );
+
+
+            if (bar) {
+
+                bar.style.width =
+                    `${percentage}%`;
+            }
+
+
+            if (value) {
+
+                value.textContent =
+                    `${percentage.toFixed(1)}%`;
+            }
+        }
+    }
+
+
+    /* ============================================================
+       SEND FER SNAPSHOT TO BACKEND
+       ============================================================ */
+
+    function sendEmotionSnapshot(
+        dominantEmotion,
+        probabilities
+    ) {
+
+        /*
+         * No socket = no transmission.
+         */
+        if (
+            !socket ||
+            socket.readyState !== WebSocket.OPEN
+        ) {
+            return;
+        }
+
+
+        const now =
+            Date.now();
+
+
+        /*
+         * Store approximately one snapshot
+         * per second instead of every inference.
+         */
+        if (
+            now - lastEmotionSendTime <
+            EMOTION_SEND_INTERVAL_MS
+        ) {
+            return;
+        }
+
+
+        lastEmotionSendTime = now;
+
+
+        const probabilityObject = {};
+
+
+        for (
+            let i = 0;
+            i < EMOTIONS.length;
+            i++
+        ) {
+
+            probabilityObject[
+                EMOTIONS[i]
+            ] =
+                Number(
+                    probabilities[i].toFixed(6)
+                );
+        }
+
+
+        const emotionMessage = {
+
+            type: "emotion",
+
+            timestamp: now,
+
+            dominant_emotion:
+                dominantEmotion,
+
+            probabilities:
+                probabilityObject
+        };
+
+
+        try {
+
+            socket.send(
+                JSON.stringify(
+                    emotionMessage
+                )
+            );
+
+            emotionSnapshotsSent++;
+
+
+            /*
+             * Avoid flooding the browser debug console.
+             * Log every fifth stored snapshot.
+             */
+            if (
+                emotionSnapshotsSent % 5 === 0
+            ) {
+
+                debug(
+                    `FER snapshot #${emotionSnapshotsSent}: ${dominantEmotion}`
+                );
+            }
+
+        } catch (error) {
+
+            debug(
+                `Failed to send FER snapshot: ${error.message}`
+            );
+        }
+    }
+
+
+    /* ============================================================
+       RESET EMOTION UI
+       ============================================================ */
+
+    function resetEmotionUI() {
+
+        probabilityHistory.length = 0;
+
+        emotionValue.textContent = "—";
+
+        smoothingValue.textContent =
+            `0 / ${SMOOTHING_WINDOW}`;
+
+        for (
+            const emotion
+            of EMOTIONS
+        ) {
+
+            const bar =
+                document.getElementById(
+                    `bar-${emotion}`
+                );
+
+            const value =
+                document.getElementById(
+                    `value-${emotion}`
+                );
+
+
+            if (bar) {
+                bar.style.width = "0%";
+            }
+
+            if (value) {
+                value.textContent = "0%";
+            }
+        }
+    }
+
+
+    /* ============================================================
+       STOP CAMERA
+       ============================================================ */
+
+    function stopCamera() {
+
+        if (animationFrameId !== null) {
+
+            cancelAnimationFrame(
+                animationFrameId
+            );
+
+            animationFrameId = null;
+        }
+
+
+        if (stream) {
+
+            stream
+                .getTracks()
+                .forEach(
+                    track => track.stop()
+                );
+
+            stream = null;
+        }
+
+
+        video.srcObject = null;
+
+
+        faceCtx.clearRect(
+            0,
+            0,
+            faceCanvas.width,
+            faceCanvas.height
+        );
+
+
+        lastVideoTime = -1;
+        lastInferenceTime = 0;
+        lastEmotionSendTime = 0;
+
+        inferenceRunning = false;
+
+        probabilityHistory.length = 0;
+
+
+        setFERStatus(
+            "FER inactive",
+            "inactive"
+        );
+
+
+        resetEmotionUI();
+
+
+        debug(
+            "Camera and FER stopped."
+        );
+    }
+
+
+    /* ============================================================
+       STOP MICROPHONE
+       ============================================================ */
+
+    function stopMicrophone() {
+
+        /*
+         * If the user is still speaking when Stop Conversation
+         * is pressed, close the speech interval BEFORE destroying
+         * the WebSocket/microphone resources.
+         */
+        finishUserSpeechIfActive();
+
+
+        if (processor) {
+
+            try {
+                processor.disconnect();
+            } catch (_) {}
+
+            processor.onaudioprocess = null;
+
+            processor = null;
+        }
+
+
+        if (microphoneSource) {
+
+            try {
+                microphoneSource.disconnect();
+            } catch (_) {}
+
+            microphoneSource = null;
+        }
+
+
+        if (mediaStream) {
+
+            mediaStream
+                .getTracks()
+                .forEach(
+                    track => track.stop()
+                );
+
+            mediaStream = null;
+        }
+
+
+        if (audioContext) {
+
+            try {
+                audioContext.close();
+            } catch (_) {}
+
+            audioContext = null;
+        }
+
+
+        debug(
+            "Microphone stopped."
+        );
+
+
+        resetVAD();
+    }
+
+
+    /* ============================================================
+       STOP ENTIRE SESSION
+       ============================================================ */
+
+    async function stopConversation() {
+
+        if (!sessionActive && !socket) {
+            return;
+        }
+
+
+        debug(
+            "Stopping integrated session..."
+        );
+
+
+        /*
+         * Set this first so the camera RAF loop
+         * cannot continue starting new work.
+         */
+        sessionActive = false;
+
+
+        /*
+         * Finish an active user speech interval before
+         * shutting down the microphone/WebSocket.
+         */
+        finishUserSpeechIfActive();
+
+
+        stopMicrophone();
+
+        stopCamera();
+
+
+        /*
+         * Close Gemini WebSocket.
+         *
+         * The backend's finally block will call
+         * conversation.end_session(), which flushes
+         * the transcript and leaves vision_signals
+         * available for the session.
+         */
+        if (socket) {
+
+            try {
+
+                if (
+                    socket.readyState ===
+                    WebSocket.OPEN ||
+                    socket.readyState ===
+                    WebSocket.CONNECTING
+                ) {
+
+                    socket.close();
+                }
+
+            } catch (_) {}
+
+            socket = null;
+        }
+
+
+        if (playbackContext) {
+
+            try {
+                await playbackContext.close();
+            } catch (_) {}
+
+            playbackContext = null;
+        }
+
+
+        resetLiveTranscription();
+
+        startButton.disabled = false;
+        stopButton.disabled = true;
+
+
+        setSessionStatus(
+            "Session ended",
+            "inactive"
+        );
+
+
+        debug(
+            `Session ended. FER snapshots sent: ${emotionSnapshotsSent}. Speech intervals detected: ${speechIntervalsDetected}`
+        );
+    }
+
+
+    /* ============================================================
+       LIVE TRANSCRIPTION UI
+       ============================================================ */
+
+    let liveTranscriptionRole = null;
+    let liveTranscriptionElement = null;
+    let liveTranscriptionText = "";
+
+    function updateLiveTranscription(role, text) {
+
+        if (!text) {
+            return;
+        }
+
+        const normalizedRole =
+            role === "assistant" ? "assistant" : "user";
+
+        /*
+         * A role change means the previous speaker's message
+         * is complete.
+         */
+        if (liveTranscriptionRole !== normalizedRole) {
+            liveTranscriptionRole = normalizedRole;
+            liveTranscriptionText = "";
+            liveTranscriptionElement = null;
+        }
+
+        if (!liveTranscriptionElement) {
+            const message = document.createElement("div");
+            message.className = `message ${normalizedRole === "assistant" ? "ai" : "user"}`;
+
+            const bubble = document.createElement("div");
+            bubble.className = "message-bubble";
+
+            const label = document.createElement("div");
+            label.className = "message-label";
+            label.textContent = normalizedRole === "assistant" ? "AI" : "USER";
+
+            const content = document.createElement("div");
+            content.className = "message-content";
+
+            bubble.appendChild(label);
+            bubble.appendChild(content);
+            message.appendChild(bubble);
+            conversation.appendChild(message);
+
+            liveTranscriptionElement = content;
+
+            if (emptyConversation && emptyConversation.isConnected) {
+                emptyConversation.remove();
+            }
+        }
+
+        liveTranscriptionText = appendTranscriptionChunk(
+            liveTranscriptionText,
+            text
+        );
+
+        liveTranscriptionElement.textContent = liveTranscriptionText;
+        conversation.scrollTop = conversation.scrollHeight;
+    }
+
+
+    function appendTranscriptionChunk(existing, chunk) {
+
+        const clean =
+            String(chunk || "").trim();
+
+        if (!clean) {
+            return existing;
+        }
+
+        if (!existing) {
+            return clean;
+        }
+
+        const noSpaceBefore =
+            /^[.,!?;:%\)\]\}\'"”’]/;
+
+        if (
+            noSpaceBefore.test(clean) ||
+            /[([{]$/.test(existing)
+        ) {
+
+            return existing + clean;
+        }
+
+        return existing + " " + clean;
+    }
+
+
+    function resetLiveTranscription() {
+
+        liveTranscriptionRole = null;
+        liveTranscriptionElement = null;
+        liveTranscriptionText = "";
+    }
+
+
+    /* ============================================================
+       CONVERSATION UI
+       ============================================================ */
+
+    function addMessage(
+        sender,
+        text
+    ) {
+
+        if (!text) {
+            return;
+        }
+
+
+        if (emptyConversation) {
+
+            emptyConversation.remove();
+        }
+
+
+        const message =
+            document.createElement("div");
+
+
+        const senderClass =
+            sender.toLowerCase() === "ai"
+                ? "ai"
+                : "user";
+
+
+        message.className =
+            `message ${senderClass}`;
+
+
+        const bubble =
+            document.createElement("div");
+
+        bubble.className =
+            "message-bubble";
+
+
+        const label =
+            document.createElement("div");
+
+        label.className =
+            "message-label";
+
+        label.textContent =
+            sender;
+
+
+        const content =
+            document.createElement("div");
+
+        content.textContent =
+            text;
+
+
+        bubble.appendChild(label);
+
+        bubble.appendChild(content);
+
+        message.appendChild(bubble);
+
+        conversation.appendChild(message);
+
+
+        conversation.scrollTop =
+            conversation.scrollHeight;
+    }
+
+
+    function resetConversationUI() {
+
+        conversation.innerHTML = "";
+
+        const placeholder =
+            document.createElement("div");
+
+        placeholder.id =
+            "emptyConversation";
+
+        placeholder.className =
+            "empty-conversation";
+
+        placeholder.textContent =
+            "Start a conversation to begin.";
+
+        conversation.appendChild(
+            placeholder
+        );
+
+        resetLiveTranscription();
+    }
+
+
+    /* ============================================================
+       BUTTON EVENTS
+       ============================================================ */
+
+    startButton.addEventListener(
+        "click",
+        startConversation
+    );
+
+
+    stopButton.addEventListener(
+        "click",
+        stopConversation
+    );
+
+
+    /* ============================================================
+       PAGE CLEANUP
+       ============================================================ */
+
+    window.addEventListener(
+        "beforeunload",
+        () => {
+
+            sessionActive = false;
+
+            /*
+             * Finish the user's active speech interval before
+             * resources disappear.
+             */
+            finishUserSpeechIfActive();
+
+            stopMicrophone();
+            stopCamera();
+
+            if (socket) {
+
+                try {
+                    socket.close();
+                } catch (_) {}
+            }
+
+            if (playbackContext) {
+
+                try {
+                    playbackContext.close();
+                } catch (_) {}
+            }
+        }
+    );
+
+
+    /* ============================================================
+       INITIAL STATE
+       ============================================================ */
+
+    setSessionStatus(
+        "Session inactive",
+        "inactive"
+    );
+
+    setFERStatus(
+        "FER inactive",
+        "inactive"
+    );
+
+    resetVAD();
+
+    debug(
+        "Integrated frontend ready."
+    );
+
+    debug(
+        "Waiting for Start Conversation."
+    );
+
+</script>
+
+</body>
+</html>

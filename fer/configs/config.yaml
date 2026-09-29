@@ -1,0 +1,55 @@
+project_name: "AI Mental Wellness - Facial Emotion Recognition"
+
+seed: 42
+
+paths:
+  train_dir: "dataset/processed/train"
+  val_dir: "dataset/processed/validation"
+  test_dir: "dataset/processed/test"
+  checkpoint_dir: "saved_models"
+  log_dir: "logs"
+
+classes:
+  - angry
+  - disgust
+  - fear
+  - happy
+  - neutral
+  - sad
+  - surprise
+
+model:
+  name: "efficientnet_b0"
+  pretrained: true
+  num_classes: 7
+  input_size: 224
+
+training:
+  batch_size: 16
+  num_workers: 4
+  device: "cuda"
+  num_epochs: 30
+  learning_rate: 0.0003
+  backbone_learning_rate: 0.00003
+  weight_decay: 0.00003
+  optimizer: "adamw"
+  scheduler: "cosine"
+  early_stopping_patience: 7
+  grad_clip_norm: 1.0
+
+augmentation:
+  horizontal_flip_prob: 0.5
+  rotation_degrees: 8
+  brightness: 0.10
+  contrast: 0.10
+
+inference:
+  smoothing_window: 8
+  face_detection_confidence: 0.6
+  webcam_index: 0
+  frame_skip: 2
+
+backend:
+  api_base_url: "http://localhost:8000"
+  emotion_endpoint: "/api/sessions/{session_id}/emotions"
+  timeout_seconds: 5

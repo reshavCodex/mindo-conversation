@@ -1,0 +1,33 @@
+# Python virtual environments
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Firebase credentials
+firebase-service-account.json
+
+# Local session artifacts
+sessions/
+
+# Test / tooling cache
+.pytest_cache/
+
+# IDE settings
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Local helper file
+file.py
