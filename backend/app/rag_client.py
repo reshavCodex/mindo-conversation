@@ -1,6 +1,7 @@
 import asyncio
 import os
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from dotenv import load_dotenv
@@ -24,16 +25,16 @@ RAG_REPORT_URL = os.getenv(
 
 
 # ============================================================
-# RETRY CONFIGURATION
+# RAG WAKE / RETRY CONFIGURATION
 # ============================================================
 
-# RAG may be asleep on Render Free and need time to wake up,
-# start FastAPI, load the knowledge base, and initialize the
-# RAG pipeline before it can handle the report request.
+# RAG may be asleep on Render Free. We first send a lightweight
+# request to the RAG service root so Render has an opportunity
+# to wake the service before we send the actual report payload.
 
-MAX_ATTEMPTS = 8
+WAKE_MAX_ATTEMPTS = 8
 
-RETRY_DELAYS = [
+WAKE_RETRY_DELAYS = [
     5,
     10,
     15,
@@ -43,18 +44,215 @@ RETRY_DELAYS = [
     30,
 ]
 
-REQUEST_TIMEOUT = httpx.Timeout(
+
+# ============================================================
+# REPORT RETRY CONFIGURATION
+# ============================================================
+
+# These retries are kept as a safety net in case the RAG service
+# becomes available between the wake check and the report POST.
+
+REPORT_MAX_ATTEMPTS = 8
+
+REPORT_RETRY_DELAYS = [
+    5,
+    10,
+    15,
+    20,
+    25,
+    30,
+    30,
+]
+
+
+# ============================================================
+# HTTP TIMEOUTS
+# ============================================================
+
+WAKE_TIMEOUT = httpx.Timeout(
+    connect=30.0,
+    read=30.0,
+    write=30.0,
+    pool=30.0,
+)
+
+REPORT_TIMEOUT = httpx.Timeout(
     connect=30.0,
     read=180.0,
     write=30.0,
     pool=30.0,
 )
 
+
+# ============================================================
+# RETRYABLE HTTP STATUS CODES
+# ============================================================
+
 RETRYABLE_STATUS_CODES = {
     502,
     503,
     504,
 }
+
+
+# ============================================================
+# RAG ROOT URL
+# ============================================================
+
+def _get_rag_root_url() -> str:
+    """
+    Derive the RAG service root URL from RAG_REPORT_URL.
+
+    Example:
+
+        https://mindo-rag.onrender.com/api/v1/reports/generate
+
+    becomes:
+
+        https://mindo-rag.onrender.com/
+    """
+
+    parsed = urlsplit(RAG_REPORT_URL)
+
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError(
+            f"Invalid RAG_REPORT_URL: {RAG_REPORT_URL}"
+        )
+
+    return f"{parsed.scheme}://{parsed.netloc}/"
+
+
+RAG_ROOT_URL = _get_rag_root_url()
+
+
+# ============================================================
+# WAKE / HEALTH CHECK
+# ============================================================
+
+async def _ensure_rag_available(
+    client: httpx.AsyncClient,
+) -> None:
+    """
+    Make sure the RAG FastAPI service is reachable before
+    sending the actual report-generation request.
+
+    The root endpoint does not need to return 200.
+
+    A 404 is acceptable because it proves that the FastAPI
+    application is alive and handling the request.
+
+    Render gateway errors and connection failures are retried
+    because they may indicate that the service is still waking.
+    """
+
+    print(
+        f"[RAG] Checking/waking RAG service → "
+        f"{RAG_ROOT_URL}"
+    )
+
+    last_error: Exception | None = None
+
+    for attempt in range(1, WAKE_MAX_ATTEMPTS + 1):
+
+        print(
+            f"[RAG] Wake attempt "
+            f"{attempt}/{WAKE_MAX_ATTEMPTS}"
+        )
+
+        try:
+            response = await client.get(
+                RAG_ROOT_URL,
+                timeout=WAKE_TIMEOUT,
+            )
+
+            # ------------------------------------------------
+            # Any non-gateway response proves that the
+            # application is reachable.
+            #
+            # This includes 404 because the RAG root route
+            # does not need to exist.
+            # ------------------------------------------------
+
+            if response.status_code not in RETRYABLE_STATUS_CODES:
+                print(
+                    f"[RAG] RAG service is reachable "
+                    f"(HTTP {response.status_code})."
+                )
+
+                return
+
+            # ------------------------------------------------
+            # Render may still be waking the service.
+            # ------------------------------------------------
+
+            last_error = httpx.HTTPStatusError(
+                f"RAG wake returned HTTP "
+                f"{response.status_code}",
+                request=response.request,
+                response=response,
+            )
+
+            print(
+                f"[RAG] Wake request returned HTTP "
+                f"{response.status_code}. "
+                f"RAG may still be starting."
+            )
+
+        except (
+            httpx.ConnectError,
+            httpx.ConnectTimeout,
+            httpx.ReadTimeout,
+            httpx.WriteTimeout,
+            httpx.PoolTimeout,
+            httpx.RemoteProtocolError,
+        ) as exc:
+
+            last_error = exc
+
+            print(
+                f"[RAG] Wake connection error: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+            print(
+                "[RAG] RAG may still be waking."
+            )
+
+        # ----------------------------------------------------
+        # Retry wake request
+        # ----------------------------------------------------
+
+        if attempt < WAKE_MAX_ATTEMPTS:
+
+            delay = WAKE_RETRY_DELAYS[
+                min(
+                    attempt - 1,
+                    len(WAKE_RETRY_DELAYS) - 1,
+                )
+            ]
+
+            print(
+                f"[RAG] Waiting {delay} seconds "
+                f"before wake retry..."
+            )
+
+            await asyncio.sleep(delay)
+
+    # ========================================================
+    # Wake attempts exhausted
+    # ========================================================
+
+    print(
+        "[RAG] Could not confirm that the RAG service "
+        f"is reachable after {WAKE_MAX_ATTEMPTS} attempts."
+    )
+
+    if last_error is not None:
+        raise last_error
+
+    raise RuntimeError(
+        "RAG service could not be reached."
+    )
 
 
 # ============================================================
@@ -72,9 +270,9 @@ async def generate_report(
     data so the Conversation backend does not depend on
     the RAG service's local filesystem.
 
-    Because the RAG service may be sleeping on Render Free,
-    transient connection failures and gateway errors are
-    retried automatically until the RAG service becomes ready.
+    Before generating the report, the RAG service is explicitly
+    checked/woken. This allows the Render Free instance to start
+    when it has previously been spun down due to inactivity.
     """
 
     if not semantic_context:
@@ -82,23 +280,36 @@ async def generate_report(
             "Semantic context cannot be empty."
         )
 
-    async with httpx.AsyncClient(
-        timeout=REQUEST_TIMEOUT
-    ) as client:
+    async with httpx.AsyncClient() as client:
+
+        # ====================================================
+        # PHASE 1: ENSURE RAG IS AWAKE / AVAILABLE
+        # ====================================================
+
+        await _ensure_rag_available(client)
+
+        # ====================================================
+        # PHASE 2: GENERATE REPORT
+        # ====================================================
 
         last_error: Exception | None = None
 
-        for attempt in range(1, MAX_ATTEMPTS + 1):
+        for attempt in range(
+            1,
+            REPORT_MAX_ATTEMPTS + 1,
+        ):
 
             print(
                 f"[RAG] Report generation attempt "
-                f"{attempt}/{MAX_ATTEMPTS} → {RAG_REPORT_URL}"
+                f"{attempt}/{REPORT_MAX_ATTEMPTS} → "
+                f"{RAG_REPORT_URL}"
             )
 
             try:
                 response = await client.post(
                     RAG_REPORT_URL,
                     json=semantic_context,
+                    timeout=REPORT_TIMEOUT,
                 )
 
                 # ------------------------------------------------
@@ -106,6 +317,7 @@ async def generate_report(
                 # ------------------------------------------------
 
                 if response.is_success:
+
                     print(
                         "[RAG] Report generation successful."
                     )
@@ -126,15 +338,14 @@ async def generate_report(
                     )
 
                     print(
-                        f"[RAG] Received HTTP "
+                        f"[RAG] Report request returned HTTP "
                         f"{response.status_code}. "
-                        f"RAG may still be starting. "
                         f"Retrying..."
                     )
 
                 else:
                     # Non-transient HTTP errors should fail
-                    # immediately instead of being retried.
+                    # immediately.
                     response.raise_for_status()
 
                     # This line should normally never be reached.
@@ -152,42 +363,41 @@ async def generate_report(
                 last_error = exc
 
                 print(
-                    f"[RAG] Transient connection error: "
+                    f"[RAG] Report connection error: "
                     f"{type(exc).__name__}: {exc}"
                 )
 
                 print(
-                    "[RAG] RAG may be waking up. "
-                    "Retrying..."
+                    "[RAG] Retrying report generation..."
                 )
 
             # ----------------------------------------------------
             # Retry delay
             # ----------------------------------------------------
 
-            if attempt < MAX_ATTEMPTS:
+            if attempt < REPORT_MAX_ATTEMPTS:
 
-                delay = RETRY_DELAYS[
+                delay = REPORT_RETRY_DELAYS[
                     min(
                         attempt - 1,
-                        len(RETRY_DELAYS) - 1,
+                        len(REPORT_RETRY_DELAYS) - 1,
                     )
                 ]
 
                 print(
                     f"[RAG] Waiting {delay} seconds "
-                    f"before retry..."
+                    f"before report retry..."
                 )
 
                 await asyncio.sleep(delay)
 
         # ========================================================
-        # All retry attempts exhausted
+        # All report attempts exhausted
         # ========================================================
 
         print(
             "[RAG] Report generation failed after "
-            f"{MAX_ATTEMPTS} attempts."
+            f"{REPORT_MAX_ATTEMPTS} attempts."
         )
 
         if last_error is not None:
