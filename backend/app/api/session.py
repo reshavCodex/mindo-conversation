@@ -68,7 +68,7 @@ def get_firebase_uid(
 
 @router.get("")
 async def get_user_session_history(
-    limit: int = 20,
+    limit: int = 100,
     firebase_uid: str = Depends(get_firebase_uid),
 ):
     """
