@@ -41,6 +41,7 @@ class GeminiLiveSession:
     async def connect(self):
 
         print("Connecting to Gemini Live...")
+        print(f"Gemini Live model: {GEMINI_LIVE_MODEL}")
 
         # --------------------------------------------------
         # Gemini Live configuration
@@ -55,11 +56,6 @@ class GeminiLiveSession:
 
             # Instructions for MINDO
             system_instruction=SYSTEM_INSTRUCTION,
-
-            # Lower thinking = lower latency
-            thinking_config=types.ThinkingConfig(
-                thinking_level="low"
-            ),
 
             # --------------------------------------------------
             # Context Window Compression
