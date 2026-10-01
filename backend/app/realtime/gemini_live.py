@@ -12,6 +12,9 @@ from app.ai.prompts import SYSTEM_INSTRUCTION
 class GeminiLiveSession:
     """
     Manages one real-time Gemini Live API session.
+
+    MINDO sends only microphone audio to Gemini.
+    Camera frames are handled separately by the local FER pipeline.
     """
 
     def __init__(self):
@@ -45,7 +48,7 @@ class GeminiLiveSession:
 
         config = types.LiveConnectConfig(
 
-            # Gemini will return audio
+            # Gemini returns audio responses
             response_modalities=[
                 "AUDIO"
             ],
@@ -58,12 +61,33 @@ class GeminiLiveSession:
                 thinking_level="low"
             ),
 
+            # --------------------------------------------------
+            # Context Window Compression
+            #
+            # Important for longer-running audio sessions.
+            # This allows Gemini to automatically compress older
+            # conversation context instead of allowing the
+            # context window to grow indefinitely.
+            # --------------------------------------------------
+
+            context_window_compression=(
+                types.ContextWindowCompressionConfig(
+                    sliding_window=types.SlidingWindow(),
+                )
+            ),
+
+            # --------------------------------------------------
             # User speech → text
+            # --------------------------------------------------
+
             input_audio_transcription=(
                 types.AudioTranscriptionConfig()
             ),
 
+            # --------------------------------------------------
             # Gemini speech → text
+            # --------------------------------------------------
+
             output_audio_transcription=(
                 types.AudioTranscriptionConfig()
             ),
@@ -109,29 +133,6 @@ class GeminiLiveSession:
             audio=types.Blob(
                 data=audio_bytes,
                 mime_type="audio/pcm;rate=16000",
-            )
-        )
-
-    # ======================================================
-    # SEND VIDEO
-    # ======================================================
-
-    async def send_video(
-        self,
-        image_bytes: bytes,
-    ):
-
-        if self.session is None:
-
-            raise RuntimeError(
-                "Gemini Live session is not connected."
-            )
-
-        await self.session.send_realtime_input(
-
-            video=types.Blob(
-                data=image_bytes,
-                mime_type="image/jpeg",
             )
         )
 
